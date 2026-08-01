@@ -111,9 +111,10 @@ def send_telegram_message(text):
 
 def send_telegram_photo(image_path, caption=""):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
+    full_caption = f"{caption}\n\n{CHANNEL}" if caption else CHANNEL
     with open(image_path, "rb") as f:
         files = {"photo": f}
-        data = {"chat_id": CHANNEL, "caption": caption, "parse_mode": "HTML"}
+        data = {"chat_id": CHANNEL, "caption": full_caption, "parse_mode": "HTML"}
         resp = requests.post(url, data=data, files=files, timeout=30)
     resp.raise_for_status()
     return resp.json()
