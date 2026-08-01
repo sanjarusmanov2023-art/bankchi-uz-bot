@@ -1,4 +1,4 @@
 {
-  "cbu": "{\"EUR\": {\"date\": \"31.07.2026\", \"diff\": 54.76, \"name\": \"EVRO\", \"rate\": 13765.33}, \"RUB\": {\"date\": \"31.07.2026\", \"diff\": -1.02, \"name\": \"Rossiya rubli\", \"rate\": 150.44}, \"USD\": {\"date\": \"31.07.2026\", \"diff\": -28.87, \"name\": \"AQSH dollari\", \"rate\": 12006.39}}{\"price_5g\": null, \"updated\": null}",
+  "cbu": "{\"EUR\": {\"date\": \"31.07.2026\", \"diff\": 54.76, \"name\": \"EVRO\", \"rate\": 13765.33}, \"RUB\": {\"date\": \"31.07.2026\", \"diff\": -1.02, \"name\": \"Rossiya rubli\", \"rate\": 150.44}, \"USD\": {\"date\": \"31.07.2026\", \"diff\": -28.87, \"name\": \"AQSH dollari\", \"rate\": 12006.39}}{\"price_5g\": \"9187000\", \"updated\": \"31 Iyul 2026, 09:46\"}",
   "banks": "{\"Kapitalbank\": {\"EUR\": {\"buy\": 13370, \"sell\": 13960}, \"RUB\": {\"buy\": 123, \"sell\": 147}, \"USD\": {\"buy\": 11925, \"sell\": 12015}}}"
 }
