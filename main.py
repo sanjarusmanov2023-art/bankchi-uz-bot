@@ -79,20 +79,30 @@ def get_cbu_gold():
     return {"updated": updated, "price_5g": price_5g}
 
 
-def get_bank_rate(slug):
+def get_bank_rate(slug, debug=False):
     url = f"https://bank.uz/uz/currency/bank/{slug}"
     resp = requests.get(url, timeout=15)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
     text = soup.get_text(" ", strip=True)
+    text = re.sub(r"\s+", " ", text)
+
+    if debug:
+        idx = text.find("Kod ")
+        idx2 = text.find("Kod ", idx + 1)
+        start = idx2 if idx2 != -1 else idx
+        print(f"---- DEBUG [{slug}] matn namunasi ----")
+        print(text[max(start, 0):start + 500] if start != -1 else "‘Kod’ so'zi topilmadi")
+        print("---- DEBUG TUGADI ----")
+
     rates = {}
     for cur in CURRENCIES:
-        pattern = rf"Kod\s*{cur}\b.*?Sotib olish\s*([\d\s]+(?:\.\d+)?)\s*Sotish\s*([\d\s]+(?:\.\d+)?)\s*Yangilanish"
+        pattern = rf"Kod {cur}\b.*?Sotib olish ([\d\s.]+?) Sotish ([\d\s.]+?) Yangilanish"
         m = re.search(pattern, text, re.DOTALL)
         if m:
             try:
-                buy = float(m.group(1).replace(" ", "").strip())
-                sell = float(m.group(2).replace(" ", "").strip())
+                buy = float(re.sub(r"[^\d.]", "", m.group(1)))
+                sell = float(re.sub(r"[^\d.]", "", m.group(2)))
                 rates[cur] = {"buy": buy, "sell": sell}
             except ValueError:
                 pass
@@ -101,13 +111,14 @@ def get_bank_rate(slug):
 
 def get_all_bank_rates():
     all_rates = {}
-    for name, slug in BANKS.items():
+    for i, (name, slug) in enumerate(BANKS.items()):
         try:
-            r = get_bank_rate(slug)
+            r = get_bank_rate(slug, debug=(i == 0))
             if r:
                 all_rates[name] = r
+                print(f"{name}: OK -> {list(r.keys())}")
             else:
-                print(f"{name}: ma'lumot topilmadi")
+                print(f"{name}: bo'sh natija (hech narsa topilmadi)")
         except Exception as e:
             print(f"{name} ({slug}) xatolik: {e}")
     return all_rates
@@ -175,7 +186,7 @@ def main():
         print("CBU kursi o'zgarmagan")
 
     all_rates = get_all_bank_rates()
-    print(f"Jami {len(all_rates)} ta bankdan ma'lumot olindi")
+    print(f"\nJAMI: {len(all_rates)} / {len(BANKS)} ta bankdan ma'lumot olindi\n")
     banks_key = json.dumps(all_rates, sort_keys=True)
 
     if all_rates and state.get("banks") != banks_key:
