@@ -9,6 +9,12 @@ CHANNEL = "@Bankchi_uz"
 STATE_FILE = "last_rates.json"
 CURRENCIES = ["USD", "EUR", "RUB"]
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept-Language": "uz,ru;q=0.9,en;q=0.8",
+}
+
 BANKS = {
     "Kapitalbank": "kapitalbank",
     "Agrobank": "agrobank",
@@ -50,7 +56,7 @@ def send_telegram_message(text):
 
 def get_cbu_rates():
     url = "https://cbu.uz/uz/arkhiv-kursov-valyut/json/"
-    resp = requests.get(url, timeout=15)
+    resp = requests.get(url, headers=HEADERS, timeout=15)
     resp.raise_for_status()
     data = resp.json()
     rates = {}
@@ -68,7 +74,7 @@ def get_cbu_rates():
 
 def get_cbu_gold():
     url = "https://cbu.uz/uz/banknotes-coins/gold-bars/prices/"
-    resp = requests.get(url, timeout=15)
+    resp = requests.get(url, headers=HEADERS, timeout=15)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
     text = soup.get_text(" ", strip=True)
@@ -81,7 +87,7 @@ def get_cbu_gold():
 
 def get_bank_rate(slug, debug=False):
     url = f"https://bank.uz/uz/currency/bank/{slug}"
-    resp = requests.get(url, timeout=15)
+    resp = requests.get(url, headers=HEADERS, timeout=15)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
     text = soup.get_text(" ", strip=True)
@@ -92,7 +98,7 @@ def get_bank_rate(slug, debug=False):
         idx2 = text.find("Kod ", idx + 1)
         start = idx2 if idx2 != -1 else idx
         print(f"---- DEBUG [{slug}] matn namunasi ----")
-        print(text[max(start, 0):start + 500] if start != -1 else "‘Kod’ so'zi topilmadi")
+        print(text[max(start, 0):start + 500] if start != -1 else "'Kod' so'zi topilmadi")
         print("---- DEBUG TUGADI ----")
 
     rates = {}
