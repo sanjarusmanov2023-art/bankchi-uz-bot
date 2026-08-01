@@ -2,6 +2,8 @@ import requests
 import re
 import json
 import os
+import random
+from io import BytesIO
 from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 
@@ -46,6 +48,38 @@ BANKS = {
     "Tenge Bank": "tenge-bank",
     "KDB Bank Uzbekiston": "uzkdb-bank",
 }
+
+BANK_DOMAINS = {
+    "Kapitalbank": "kapitalbank.uz",
+    "Agrobank": "agrobank.uz",
+    "Ipoteka-bank": "ipotekabank.uz",
+    "Xalq banki": "xalqbank.uz",
+    "O'zbekiston Milliy banki": "nbu.uz",
+    "Asakabank": "asakabank.uz",
+    "O'zsanoatqurilishbank": "sqb.uz",
+    "Turon bank": "turonbank.uz",
+    "Aloqabank": "aloqabank.uz",
+    "Mikrokreditbank": "mkbank.uz",
+    "Hamkorbank": "hamkorbank.uz",
+    "Ipak Yuli Bank": "ipakyulibank.uz",
+    "InFinBank": "infinbank.uz",
+    "Orient Finans Bank": "orientfinance.uz",
+    "Asia Alliance Bank": "aab.uz",
+    "Anorbank": "anorbank.uz",
+    "Garant bank": "garantbank.uz",
+    "Trastbank": "trustbank.uz",
+    "Universal bank": "universalbank.uz",
+    "Openbank": "open.uz",
+    "Octobank": "octobank.uz",
+    "Hayot Bank": "hayotbank.uz",
+    "BRB": "brb.uz",
+    "Poytaxt bank": "poytaxtbank.uz",
+    "Ziraat Bank": "ziraatbank.uz",
+    "Tenge Bank": "tengebank.uz",
+    "KDB Bank Uzbekiston": "kdb.uz",
+}
+
+CURRENCY_FLAG = {"USD": "us", "EUR": "eu", "RUB": "ru", "CNY": "cn", "GBP": "gb"}
 
 FONT_BOLD_PATHS = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -175,123 +209,292 @@ def save_state(state):
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 
-def format_cbu_post(rates, gold):
-    lines = ["📊 <b>Markaziy bank rasmiy kursi</b>\n"]
-    order = ["USD", "EUR", "RUB", "CNY", "GBP"]
-    for code in order:
-        if code in rates:
-            info = rates[code]
-            arrow = "🔺" if info["diff"] > 0 else ("🔻" if info["diff"] < 0 else "➡️")
-            lines.append(f"{code} ({info['name']}): {info['rate']:.2f} so'm {arrow} {info['diff']:+.2f}")
-    lines.append(f"\n{CHANNEL}")
-    return "\n".join(lines)
-
-
-def format_forecast_post(cbu_rates):
-    lines = ["🔮 <b>Ertangi kurs bo'yicha taxmin</b>"]
-    lines.append("<i>(Rasmiy bashorat emas — so'nggi o'zgarish tendensiyasiga asoslangan oddiy izoh)</i>\n")
-    usd = cbu_rates.get("USD")
-    if usd:
-        diff = usd["diff"]
-        current = usd["rate"]
-        trend = "oshish" if diff > 0 else ("pasayish" if diff < 0 else "barqaror qolish")
-        estimated = current + diff
-        lines.append(f"So'nggi o'zgarish: {diff:+.2f} so'm")
-        est_text = f"{estimated:,.0f}".replace(",", " ")
-        lines.append(f"Shu tendensiya davom etsa, ertangi USD kursi taxminan {est_text} so'm atrofida bo'lishi mumkin ({trend} tendensiyasi).")
-    lines.append(f"\n{CHANNEL}")
-    return "\n".join(lines)
-
-
-def format_ranking_post(all_rates):
-    buy_sorted = sorted(all_rates.items(), key=lambda x: x[1]["buy"], reverse=True)
-    sell_sorted = sorted(all_rates.items(), key=lambda x: x[1]["sell"])
-
-    lines = ["🏆 <b>USD — banklar reytingi (27 ta bank)</b>\n"]
-    lines.append("💵 <b>Eng qimmat sotib olayotgan banklar</b>:")
-    for name, r in buy_sorted:
-        lines.append(f"{name}: {r['buy']:,.0f} so'm".replace(",", " "))
-
-    lines.append("\n💰 <b>Eng arzon sotayotgan banklar</b>:")
-    for name, r in sell_sorted:
-        lines.append(f"{name}: {r['sell']:,.0f} so'm".replace(",", " "))
-
-    lines.append(f"\n{CHANNEL}")
-    return "\n".join(lines)
-
-
-def generate_top10_image(buy_sorted_top10):
-    width, height = 900, 150 + 68 * len(buy_sorted_top10) + 100
-    img = Image.new("RGB", (width, height), color=(18, 28, 58))
+def vertical_gradient(width, height, top_color, bottom_color):
+    img = Image.new("RGB", (width, height), top_color)
     draw = ImageDraw.Draw(img)
     for y in range(height):
-        t = y / height
-        draw.line([(0, y), (width, y)], fill=(int(18 + t * 12), int(28 + t * 22), int(58 + t * 42)))
+        t = y / max(height - 1, 1)
+        r = int(top_color[0] + (bottom_color[0] - top_color[0]) * t)
+        g = int(top_color[1] + (bottom_color[1] - top_color[1]) * t)
+        b = int(top_color[2] + (bottom_color[2] - top_color[2]) * t)
+        draw.line([(0, y), (width, y)], fill=(r, g, b))
+    return img
+
+
+def draw_zigzag(draw, x0, y0, x1, y1, n_points, amplitude, color, width=3):
+    pts = []
+    for i in range(n_points + 1):
+        x = x0 + (x1 - x0) * i / n_points
+        y = y0 + random.uniform(-amplitude, amplitude)
+        pts.append((x, y))
+    try:
+        draw.line(pts, fill=color, width=width, joint="curve")
+    except Exception:
+        draw.line(pts, fill=color, width=width)
+    return pts
+
+
+def circle_crop(img, size):
+    img = img.convert("RGBA").resize((size, size))
+    mask = Image.new("L", (size, size), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.ellipse((0, 0, size, size), fill=255)
+    out = Image.new("RGBA", (size, size))
+    out.paste(img, (0, 0), mask)
+    return out
+
+
+def fetch_logo(domain, size=64):
+    if not domain:
+        return None
+    try:
+        url = f"https://www.google.com/s2/favicons?domain={domain}&sz=128"
+        resp = requests.get(url, headers=HEADERS, timeout=8)
+        resp.raise_for_status()
+        img = Image.open(BytesIO(resp.content))
+        return circle_crop(img, size)
+    except Exception as e:
+        print(f"Logo topilmadi ({domain}): {e}")
+        return None
+
+
+def letter_badge(letter, size=64, color=(70, 110, 200)):
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.ellipse((0, 0, size, size), fill=color)
+    font = load_font(FONT_BOLD_PATHS, int(size * 0.5))
+    bbox = draw.textbbox((0, 0), letter, font=font)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((size - w) / 2 - bbox[0], (size - h) / 2 - bbox[1]), letter, font=font, fill=(255, 255, 255))
+    return img
+
+
+def add_diagonal_watermark(img, text="@BANKCHI_UZ", opacity=32, font_size=100, angle=-25):
+    img = img.convert("RGBA")
+    width, height = img.size
+    txt_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(txt_layer)
+    font = load_font(FONT_BOLD_PATHS, font_size)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((width - w) / 2 - bbox[0], (height - h) / 2 - bbox[1]), text, font=font, fill=(255, 255, 255, opacity))
+    txt_layer = txt_layer.rotate(angle, expand=False, resample=Image.BICUBIC)
+    combined = Image.alpha_composite(img, txt_layer)
+    return combined.convert("RGB")
+
+
+def fetch_flag(code, width=70):
+    try:
+        url = f"https://flagcdn.com/w80/{code}.png"
+        resp = requests.get(url, headers=HEADERS, timeout=8)
+        resp.raise_for_status()
+        img = Image.open(BytesIO(resp.content)).convert("RGBA")
+        h = int(img.height * width / img.width)
+        return img.resize((width, h))
+    except Exception as e:
+        print(f"Bayroq topilmadi ({code}): {e}")
+        return None
+
+
+def generate_cbu_image(rates):
+    order = [c for c in ["USD", "EUR", "RUB", "CNY", "GBP"] if c in rates]
+    row_h = 110
+    header_h = 210
+    width = 1000
+    height = header_h + row_h * len(order) + 70
+
+    full = Image.new("RGB", (width, height), (255, 255, 255))
+    header = vertical_gradient(width, header_h, (8, 35, 85), (18, 95, 165))
+    full.paste(header, (0, 0))
+    draw = ImageDraw.Draw(full)
+
+    draw_zigzag(draw, 0, header_h * 0.75, width, header_h * 0.35, 16, 26, (70, 200, 210), 3)
 
     title_font = load_font(FONT_BOLD_PATHS, 42)
-    header_font = load_font(FONT_BOLD_PATHS, 26)
-    row_font = load_font(FONT_REGULAR_PATHS, 28)
-    small_font = load_font(FONT_REGULAR_PATHS, 20)
+    date_font = load_font(FONT_BOLD_PATHS, 26)
+    draw.text((40, 35), "$ VALYUTALAR KURSI", font=title_font, fill=(255, 255, 255))
+    date_str = rates[order[0]]["date"] if order else ""
+    draw.text((40, 100), date_str, font=date_font, fill=(215, 235, 255))
 
-    draw.text((40, 30), "TOP 10 BANK — USD", font=title_font, fill=(255, 255, 255))
-    draw.text((40, 88), "Eng qimmat sotib olayotgan banklar", font=header_font, fill=(255, 215, 0))
+    name_font = load_font(FONT_BOLD_PATHS, 32)
+    sub_font = load_font(FONT_REGULAR_PATHS, 19)
+    value_font = load_font(FONT_BOLD_PATHS, 36)
+    diff_font = load_font(FONT_BOLD_PATHS, 26)
 
-    y = 150
-    row_height = 68
-    for i, (name, price) in enumerate(buy_sorted_top10, start=1):
-        rank_color = (255, 215, 0) if i <= 3 else (200, 200, 200)
-        draw.text((40, y), f"{i}", font=header_font, fill=rank_color)
-        draw.text((90, y), name, font=row_font, fill=(255, 255, 255))
-        price_text = f"{price:,.0f} so'm".replace(",", " ")
-        draw.text((width - 260, y), price_text, font=row_font, fill=(120, 220, 120))
-        draw.line([(40, y + row_height - 12), (width - 40, y + row_height - 12)], fill=(80, 90, 120), width=1)
-        y += row_height
+    y = header_h + 20
+    for code in order:
+        info = rates[code]
+        flag = fetch_flag(CURRENCY_FLAG.get(code, "un"), 74)
+        if flag:
+            full.paste(flag, (40, y + 15), flag)
+        draw.text((150, y + 5), code, font=name_font, fill=(20, 30, 60))
+        draw.text((150, y + 48), info["name"], font=sub_font, fill=(120, 120, 130))
+        rate_text = f"{info['rate']:,.2f}".replace(",", " ")
+        draw.text((480, y + 22), rate_text, font=value_font, fill=(20, 30, 60))
+        diff = info["diff"]
+        arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "→")
+        color = (25, 150, 60) if diff > 0 else ((205, 35, 35) if diff < 0 else (120, 120, 120))
+        draw.text((800, y + 28), f"{arrow} {diff:+.2f}", font=diff_font, fill=color)
+        draw.line([(40, y + row_h - 12), (width - 40, y + row_h - 12)], fill=(230, 230, 235), width=2)
+        y += row_h
 
-    draw.text((40, height - 55), "@Bankchi_uz", font=small_font, fill=(180, 190, 210))
+    draw.text((width - 240, height - 40), "@Bankchi_uz", font=sub_font, fill=(150, 150, 155))
+    full = add_diagonal_watermark(full, font_size=85)
+    path = "/tmp/cbu_rates.png"
+    full.save(path)
+    return path
 
-    path = "/tmp/top10_usd.png"
-    img.save(path)
+
+def generate_forecast_image(cbu_rates):
+    usd = cbu_rates.get("USD")
+    if not usd:
+        return None
+    diff = usd["diff"]
+    current = usd["rate"]
+    estimated = current + diff
+    up = diff >= 0
+
+    top_color = (8, 55, 130) if up else (110, 12, 12)
+    bottom_color = (20, 120, 210) if up else (185, 25, 25)
+    width, height = 900, 950
+    full = vertical_gradient(width, height, top_color, bottom_color)
+    draw = ImageDraw.Draw(full)
+
+    for i in range(3):
+        draw_zigzag(draw, 0, height * 0.32 + i * 45, width, height * 0.18 + i * 35, 12, 55, (255, 255, 255), 3)
+
+    flag = fetch_flag("us", 130)
+    if flag:
+        full.paste(flag, (50, 45), flag)
+
+    title_font = load_font(FONT_BOLD_PATHS, 40)
+    draw.text((200, 55), "AQSH DOLLARI", font=title_font, fill=(255, 255, 255))
+    draw.text((200, 100), "$ DOLLAR", font=title_font, fill=(255, 255, 255))
+
+    date_font = load_font(FONT_BOLD_PATHS, 32)
+    draw.text((50, 220), usd.get("date", ""), font=date_font, fill=(255, 255, 255))
+
+    label_font = load_font(FONT_BOLD_PATHS, 26)
+    draw.text((50, 310), "KUTILAYOTGAN KURS:", font=label_font, fill=(225, 225, 225))
+    big_font = load_font(FONT_BOLD_PATHS, 84)
+    est_text = f"{estimated:,.0f}".replace(",", " ")
+    draw.text((50, 350), f"{est_text} SO'M", font=big_font, fill=(255, 255, 255))
+
+    watermark_font = load_font(FONT_BOLD_PATHS, 54)
+    draw.text((50, 520), "@BANKCHI_UZ", font=watermark_font, fill=(255, 255, 255))
+
+    change_font = load_font(FONT_BOLD_PATHS, 40)
+    arrow = "▲" if up else "▼"
+    draw.text((50, 650), f"{arrow} {diff:+.0f} SO'M", font=change_font, fill=(255, 255, 255))
+
+    small_font = load_font(FONT_REGULAR_PATHS, 22)
+    draw.text((50, 710), "Rasmiy bashorat emas — so'nggi tendensiyaga asoslangan taxmin", font=small_font, fill=(230, 230, 230))
+    draw.text((50, height - 55), "@Bankchi_uz", font=small_font, fill=(230, 230, 230))
+
+    full = add_diagonal_watermark(full, font_size=70, opacity=22)
+    path = "/tmp/forecast.png"
+    full.save(path)
     return path
 
 
 def generate_gold_image(gold_data):
     prices = gold_data.get("prices", [])
-    width, height = 900, 190 + 70 * len(prices) + 90
-    img = Image.new("RGB", (width, height), color=(42, 32, 12))
-    draw = ImageDraw.Draw(img)
-    for y in range(height):
-        t = y / height
-        draw.line([(0, y), (width, y)], fill=(int(42 + t * 28), int(32 + t * 18), int(12 + t * 6)))
+    width, height = 900, 210 + 72 * len(prices) + 90
+    full = vertical_gradient(width, height, (48, 34, 10), (70, 50, 15))
+    draw = ImageDraw.Draw(full)
 
     title_font = load_font(FONT_BOLD_PATHS, 40)
     header_font = load_font(FONT_BOLD_PATHS, 24)
     row_font = load_font(FONT_REGULAR_PATHS, 26)
     small_font = load_font(FONT_REGULAR_PATHS, 18)
 
-    draw.text((40, 30), "OLTIN QUYMALAR NARXI", font=title_font, fill=(255, 215, 0))
-    draw.text((40, 85), "Markaziy bank rasmiy narxi", font=header_font, fill=(230, 230, 230))
+    draw.text((40, 30), "🥇 OLTIN QUYMALAR NARXI", font=title_font, fill=(255, 215, 0))
+    draw.text((40, 88), "Markaziy bank rasmiy narxi", font=header_font, fill=(235, 230, 220))
 
-    draw.text((40, 145), "Og'irligi", font=header_font, fill=(255, 215, 0))
-    draw.text((320, 145), "Sotish narxi", font=header_font, fill=(255, 215, 0))
-    draw.text((620, 145), "Qaytarib sotib olish", font=header_font, fill=(255, 215, 0))
+    draw.text((40, 150), "Og'irligi", font=header_font, fill=(255, 215, 0))
+    draw.text((320, 150), "Sotish narxi", font=header_font, fill=(255, 215, 0))
+    draw.text((620, 150), "Qaytarib sotib olish", font=header_font, fill=(255, 215, 0))
 
-    y = 195
-    row_height = 70
+    y = 200
+    row_height = 72
     for item in prices:
         draw.text((40, y), f"{item['gram']} gramm", font=row_font, fill=(255, 255, 255))
-        draw.text((320, y), f"{item['sell']:,.0f} so'm".replace(",", " "), font=row_font, fill=(120, 220, 120))
-        draw.text((620, y), f"{item['buyback_ok']:,.0f} so'm".replace(",", " "), font=row_font, fill=(210, 210, 210))
-        draw.line([(40, y + row_height - 18), (width - 40, y + row_height - 18)], fill=(90, 70, 40), width=1)
+        draw.text((320, y), f"{item['sell']:,.0f} so'm".replace(",", " "), font=row_font, fill=(140, 230, 140))
+        draw.text((620, y), f"{item['buyback_ok']:,.0f} so'm".replace(",", " "), font=row_font, fill=(220, 220, 220))
+        draw.line([(40, y + row_height - 18), (width - 40, y + row_height - 18)], fill=(100, 80, 45), width=1)
         y += row_height
 
     if gold_data.get("updated"):
-        draw.text((40, y + 5), f"Yangilangan: {gold_data['updated']}", font=small_font, fill=(200, 190, 160))
+        draw.text((40, y + 8), f"Yangilangan: {gold_data['updated']}", font=small_font, fill=(210, 200, 170))
+    draw.text((40, height - 45), "@Bankchi_uz", font=small_font, fill=(210, 200, 170))
 
-    draw.text((40, height - 45), "@Bankchi_uz", font=small_font, fill=(200, 190, 160))
-
+    full = add_diagonal_watermark(full, font_size=80)
     path = "/tmp/gold_prices.png"
-    img.save(path)
+    full.save(path)
     return path
+
+
+def generate_top10_image(buy_sorted_top10):
+    row_h = 92
+    header_h = 165
+    width = 1000
+    height = header_h + row_h * len(buy_sorted_top10) + 70
+    full = vertical_gradient(width, height, (10, 18, 42), (24, 38, 78))
+    draw = ImageDraw.Draw(full)
+
+    title_font = load_font(FONT_BOLD_PATHS, 40)
+    sub_font = load_font(FONT_BOLD_PATHS, 24)
+    draw.text((40, 28), "🏆 TOP 10 BANK", font=title_font, fill=(255, 255, 255))
+    draw.text((40, 84), "$ DOLLAR eng qimmat sotib olayotgan banklar", font=sub_font, fill=(255, 205, 60))
+
+    name_font = load_font(FONT_BOLD_PATHS, 27)
+    price_font = load_font(FONT_BOLD_PATHS, 29)
+    rank_font = load_font(FONT_BOLD_PATHS, 30)
+
+    y = header_h
+    for i, (name, price) in enumerate(buy_sorted_top10, start=1):
+        rank_color = (255, 205, 60) if i <= 3 else (200, 200, 210)
+        draw.text((25, y + 28), f"{i}", font=rank_font, fill=rank_color)
+
+        logo_size = 62
+        domain = BANK_DOMAINS.get(name)
+        logo = fetch_logo(domain, logo_size)
+        if logo is None:
+            logo = letter_badge(name[0].upper(), logo_size, (70, 110, 200))
+        full.paste(logo, (70, y + 15), logo)
+
+        draw.text((150, y + 28), name, font=name_font, fill=(255, 255, 255))
+        price_text = f"{price:,.0f} so'm".replace(",", " ")
+        draw.text((width - 260, y + 28), price_text, font=price_font, fill=(130, 225, 130))
+        draw.line([(25, y + row_h - 8), (width - 25, y + row_h - 8)], fill=(65, 75, 105), width=1)
+        y += row_h
+
+    small_font = load_font(FONT_REGULAR_PATHS, 20)
+    draw.text((40, height - 45), "@Bankchi_uz", font=small_font, fill=(180, 190, 210))
+    full = add_diagonal_watermark(full, font_size=75)
+    path = "/tmp/top10_usd.png"
+    full.save(path)
+    return path
+
+
+def format_buyers_post(all_rates):
+    buy_sorted = sorted(all_rates.items(), key=lambda x: x[1]["buy"], reverse=True)
+    lines = ["💵 <b>$ DOLLAR — eng qimmat sotib olayotgan banklar</b>"]
+    lines.append("<i>(dollaringizni sotmoqchi bo'lsangiz foydali)</i>\n")
+    for name, r in buy_sorted:
+        lines.append(f"{name}: {r['buy']:,.0f} so'm".replace(",", " "))
+    lines.append(f"\n{CHANNEL}")
+    return "\n".join(lines)
+
+
+def format_sellers_post(all_rates):
+    sell_sorted = sorted(all_rates.items(), key=lambda x: x[1]["sell"])
+    lines = ["💰 <b>$ DOLLAR — eng arzon sotayotgan banklar</b>"]
+    lines.append("<i>(dollar sotib olmoqchi bo'lsangiz foydali)</i>\n")
+    for name, r in sell_sorted:
+        lines.append(f"{name}: {r['sell']:,.0f} so'm".replace(",", " "))
+    lines.append(f"\n{CHANNEL}")
+    return "\n".join(lines)
 
 
 def main():
@@ -303,13 +506,28 @@ def main():
     cbu_key = json.dumps(cbu_rates, sort_keys=True) + json.dumps(gold, sort_keys=True)
 
     if state.get("cbu") != cbu_key:
-        send_telegram_message(format_cbu_post(cbu_rates, gold))
-        send_telegram_message(format_forecast_post(cbu_rates))
+        try:
+            cbu_img = generate_cbu_image(cbu_rates)
+            send_telegram_photo(cbu_img, caption="📊 Markaziy bank rasmiy kursi")
+        except Exception as e:
+            print(f"CBU rasm xatolik: {e}")
+
+        try:
+            forecast_img = generate_forecast_image(cbu_rates)
+            if forecast_img:
+                send_telegram_photo(forecast_img, caption="🔮 Ertangi kurs bo'yicha taxmin (rasmiy bashorat emas)")
+        except Exception as e:
+            print(f"Taxmin rasm xatolik: {e}")
+
         if gold.get("prices"):
-            gold_img = generate_gold_image(gold)
-            send_telegram_photo(gold_img, caption="🥇 Oltin quymalar narxi — Markaziy bank")
+            try:
+                gold_img = generate_gold_image(gold)
+                send_telegram_photo(gold_img, caption="🥇 Oltin quymalar narxi — Markaziy bank")
+            except Exception as e:
+                print(f"Oltin rasm xatolik: {e}")
+
         new_state["cbu"] = cbu_key
-        print("CBU + taxmin + oltin rasmli post yuborildi")
+        print("CBU rasmli postlar yuborildi")
     else:
         print("CBU kursi o'zgarmagan")
 
@@ -318,12 +536,15 @@ def main():
     banks_key = json.dumps(all_rates, sort_keys=True)
 
     if all_rates and state.get("banks") != banks_key:
-        send_telegram_message(format_ranking_post(all_rates))
+        send_telegram_message(format_buyers_post(all_rates))
+        send_telegram_message(format_sellers_post(all_rates))
 
-        buy_sorted = sorted(all_rates.items(), key=lambda x: x[1]["buy"], reverse=True)[:10]
-        top10_data = [(name, r["buy"]) for name, r in buy_sorted]
-        top10_img = generate_top10_image(top10_data)
-        send_telegram_photo(top10_img, caption="🏆 TOP 10 bank — USD eng qimmat sotib olayotgan")
+        try:
+            buy_sorted = sorted(all_rates.items(), key=lambda x: x[1]["buy"], reverse=True)[:10]
+            top10_img = generate_top10_image(buy_sorted)
+            send_telegram_photo(top10_img, caption="🏆 TOP 10 bank — $ DOLLAR eng qimmat sotib olayotgan")
+        except Exception as e:
+            print(f"Top10 rasm xatolik: {e}")
 
         new_state["banks"] = banks_key
         print("Bank reytingi (matn + rasm) yuborildi")
