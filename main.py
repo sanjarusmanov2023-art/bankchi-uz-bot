@@ -83,10 +83,11 @@ def get_bank_rate(slug):
     url = f"https://bank.uz/uz/currency/bank/{slug}"
     resp = requests.get(url, timeout=15)
     resp.raise_for_status()
-    text = resp.text
+    soup = BeautifulSoup(resp.text, "html.parser")
+    text = soup.get_text(" ", strip=True)
     rates = {}
     for cur in CURRENCIES:
-        pattern = rf"Kod\s*\[?{cur}\]?.*?Sotib olish\s*([\d\s]+(?:\.\d+)?)\s*.*?Sotish\s*([\d\s]+(?:\.\d+)?)\s*.*?Yangilanish"
+        pattern = rf"Kod\s*{cur}\b.*?Sotib olish\s*([\d\s]+(?:\.\d+)?)\s*Sotish\s*([\d\s]+(?:\.\d+)?)\s*Yangilanish"
         m = re.search(pattern, text, re.DOTALL)
         if m:
             try:
@@ -105,6 +106,8 @@ def get_all_bank_rates():
             r = get_bank_rate(slug)
             if r:
                 all_rates[name] = r
+            else:
+                print(f"{name}: ma'lumot topilmadi")
         except Exception as e:
             print(f"{name} ({slug}) xatolik: {e}")
     return all_rates
@@ -172,13 +175,14 @@ def main():
         print("CBU kursi o'zgarmagan")
 
     all_rates = get_all_bank_rates()
+    print(f"Jami {len(all_rates)} ta bankdan ma'lumot olindi")
     banks_key = json.dumps(all_rates, sort_keys=True)
 
     if all_rates and state.get("banks") != banks_key:
         for currency in CURRENCIES:
             send_telegram_message(format_ranking_post(all_rates, currency))
         new_state["banks"] = banks_key
-        print(f"{len(all_rates)} ta bank reytingi yuborildi")
+        print("Bank reytingi postlari yuborildi")
     else:
         print("Bank kurslari o'zgarmagan yoki mavjud emas")
 
