@@ -235,39 +235,66 @@ def draw_zigzag(draw, x0, y0, x1, y1, n_points, amplitude, color, width=3):
     return pts
 
 
-def circle_crop(img, size):
-    img = img.convert("RGBA").resize((size, size))
-    mask = Image.new("L", (size, size), 0)
+def round_corners(img, radius=12):
+    img = img.convert("RGBA")
+    w, h = img.size
+    mask = Image.new("L", (w, h), 0)
     mask_draw = ImageDraw.Draw(mask)
-    mask_draw.ellipse((0, 0, size, size), fill=255)
-    out = Image.new("RGBA", (size, size))
+    mask_draw.rounded_rectangle([0, 0, w, h], radius=radius, fill=255)
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     out.paste(img, (0, 0), mask)
     return out
 
 
-def fetch_logo(domain, size=64):
+def fetch_logo_raw(domain):
     if not domain:
         return None
-    try:
-        url = f"https://www.google.com/s2/favicons?domain={domain}&sz=128"
-        resp = requests.get(url, headers=HEADERS, timeout=8)
-        resp.raise_for_status()
-        img = Image.open(BytesIO(resp.content))
-        return circle_crop(img, size)
-    except Exception as e:
-        print(f"Logo topilmadi ({domain}): {e}")
-        return None
+    urls = [
+        f"https://logos-api.apistemic.com/domain:{domain}",
+        f"https://www.google.com/s2/favicons?domain={domain}&sz=128",
+    ]
+    for url in urls:
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=8)
+            resp.raise_for_status()
+            return Image.open(BytesIO(resp.content))
+        except Exception as e:
+            print(f"Logo topilmadi ({domain}, {url}): {e}")
+            continue
+    return None
 
 
-def letter_badge(letter, size=64, color=(70, 110, 200)):
-    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    draw.ellipse((0, 0, size, size), fill=color)
-    font = load_font(FONT_BOLD_PATHS, int(size * 0.5))
-    bbox = draw.textbbox((0, 0), letter, font=font)
+def fit_logo_box(img, box_w, box_h, bg=(255, 255, 255)):
+    box = Image.new("RGBA", (box_w, box_h), (*bg, 255))
+    img = img.convert("RGBA")
+    iw, ih = img.size
+    scale = min((box_w - 14) / iw, (box_h - 14) / ih)
+    new_w, new_h = max(1, int(iw * scale)), max(1, int(ih * scale))
+    resized = img.resize((new_w, new_h), Image.LANCZOS)
+    offset = ((box_w - new_w) // 2, (box_h - new_h) // 2)
+    box.paste(resized, offset, resized)
+    return round_corners(box, radius=12)
+
+
+def letter_badge_box(letter, box_w, box_h, color=(70, 110, 200)):
+    box = Image.new("RGBA", (box_w, box_h), (*color, 255))
+    d = ImageDraw.Draw(box)
+    font = load_font(FONT_BOLD_PATHS, int(min(box_w, box_h) * 0.55))
+    bbox = d.textbbox((0, 0), letter, font=font)
     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((size - w) / 2 - bbox[0], (size - h) / 2 - bbox[1]), letter, font=font, fill=(255, 255, 255))
-    return img
+    d.text(((box_w - w) / 2 - bbox[0], (box_h - h) / 2 - bbox[1]), letter, font=font, fill=(255, 255, 255, 255))
+    return round_corners(box, radius=12)
+
+
+def get_bank_logo_box(name, box_w=84, box_h=56):
+    domain = BANK_DOMAINS.get(name)
+    raw = fetch_logo_raw(domain)
+    if raw is not None:
+        try:
+            return fit_logo_box(raw, box_w, box_h)
+        except Exception as e:
+            print(f"Logo qayta ishlashda xatolik ({name}): {e}")
+    return letter_badge_box(name[0].upper(), box_w, box_h)
 
 
 def add_diagonal_watermark(img, text="@BANKCHI_UZ", opacity=32, font_size=100, angle=-25, color=(255, 255, 255)):
@@ -477,14 +504,10 @@ def generate_top10_image(buy_sorted_top10):
         rank_color = (255, 205, 60) if i <= 3 else (200, 200, 210)
         draw.text((25, y + 28), f"{i}", font=rank_font, fill=rank_color)
 
-        logo_size = 62
-        domain = BANK_DOMAINS.get(name)
-        logo = fetch_logo(domain, logo_size)
-        if logo is None:
-            logo = letter_badge(name[0].upper(), logo_size, (70, 110, 200))
-        full.paste(logo, (70, y + 15), logo)
+        logo_box = get_bank_logo_box(name, box_w=84, box_h=56)
+        full.paste(logo_box, (65, y + 18), logo_box)
 
-        draw.text((150, y + 28), name, font=name_font, fill=(255, 255, 255))
+        draw.text((165, y + 28), name, font=name_font, fill=(255, 255, 255))
         price_text = f"{price:,.0f} so'm".replace(",", " ")
         draw.text((width - 260, y + 28), price_text, font=price_font, fill=(130, 225, 130))
         draw.line([(25, y + row_h - 8), (width - 25, y + row_h - 8)], fill=(65, 75, 105), width=1)
