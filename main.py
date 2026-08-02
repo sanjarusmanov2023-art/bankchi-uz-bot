@@ -4,6 +4,7 @@ import json
 import os
 import random
 from io import BytesIO
+from datetime import datetime, timezone, timedelta
 from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 
@@ -12,6 +13,7 @@ CHANNEL = "@Bankchi_uz"
 STATE_FILE = "last_rates.json"
 CBU_CURRENCIES = ["USD", "EUR", "RUB", "CNY", "GBP"]
 BANK_CURRENCY = "USD"
+TASHKENT_TZ = timezone(timedelta(hours=5))
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -69,6 +71,10 @@ def load_font(paths, size):
             except Exception:
                 continue
     return ImageFont.load_default()
+
+
+def now_tashkent_str():
+    return datetime.now(TASHKENT_TZ).strftime("%d.%m.%Y %H:%M")
 
 
 def send_telegram_message(text):
@@ -436,8 +442,10 @@ def generate_top10_image(buy_sorted_top10):
 
     title_font = load_font(FONT_BOLD_PATHS, 36)
     sub_font = load_font(FONT_BOLD_PATHS, 22)
-    draw.text((125, 30), "TOP 10 BANK", font=title_font, fill=(255, 255, 255))
-    draw.text((125, 82), "$ DOLLAR eng qimmat sotib olayotgan banklar", font=sub_font, fill=(210, 232, 255))
+    date_font = load_font(FONT_BOLD_PATHS, 18)
+    draw.text((125, 25), "TOP 10 BANK", font=title_font, fill=(255, 255, 255))
+    draw.text((125, 74), "$ DOLLAR eng qimmat sotib olayotgan banklar", font=sub_font, fill=(210, 232, 255))
+    draw.text((125, 104), now_tashkent_str(), font=date_font, fill=(190, 215, 245))
 
     col_font = load_font(FONT_BOLD_PATHS, 20)
     y_th = header_h + 12
@@ -475,6 +483,7 @@ def generate_top10_image(buy_sorted_top10):
 def format_buyers_post(all_rates):
     buy_sorted = sorted(all_rates.items(), key=lambda x: x[1]["buy"], reverse=True)
     lines = ["💵 <b>$ DOLLAR — eng qimmat sotib olayotgan banklar</b>"]
+    lines.append(f"<i>{now_tashkent_str()} holatiga</i>")
     lines.append("<i>(dollaringizni sotmoqchi bo'lsangiz foydali)</i>\n")
     for name, r in buy_sorted:
         lines.append(f"{name}: {r['buy']:,.0f} so'm".replace(",", " "))
@@ -485,6 +494,7 @@ def format_buyers_post(all_rates):
 def format_sellers_post(all_rates):
     sell_sorted = sorted(all_rates.items(), key=lambda x: x[1]["sell"])
     lines = ["💰 <b>$ DOLLAR — eng arzon sotayotgan banklar</b>"]
+    lines.append(f"<i>{now_tashkent_str()} holatiga</i>")
     lines.append("<i>(dollar sotib olmoqchi bo'lsangiz foydali)</i>\n")
     for name, r in sell_sorted:
         lines.append(f"{name}: {r['sell']:,.0f} so'm".replace(",", " "))
