@@ -270,7 +270,7 @@ def letter_badge(letter, size=64, color=(70, 110, 200)):
     return img
 
 
-def add_diagonal_watermark(img, text="@BANKCHI_UZ", opacity=32, font_size=100, angle=-25):
+def add_diagonal_watermark(img, text="@BANKCHI_UZ", opacity=32, font_size=100, angle=-25, color=(255, 255, 255)):
     img = img.convert("RGBA")
     width, height = img.size
     txt_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
@@ -278,10 +278,20 @@ def add_diagonal_watermark(img, text="@BANKCHI_UZ", opacity=32, font_size=100, a
     font = load_font(FONT_BOLD_PATHS, font_size)
     bbox = draw.textbbox((0, 0), text, font=font)
     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((width - w) / 2 - bbox[0], (height - h) / 2 - bbox[1]), text, font=font, fill=(255, 255, 255, opacity))
+    draw.text(((width - w) / 2 - bbox[0], (height - h) / 2 - bbox[1]), text, font=font, fill=(*color, opacity))
     txt_layer = txt_layer.rotate(angle, expand=False, resample=Image.BICUBIC)
     combined = Image.alpha_composite(img, txt_layer)
     return combined.convert("RGB")
+
+
+def draw_gold_bar_icon(base_img, x, y, w, h):
+    icon = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(icon)
+    top_inset = int(w * 0.18)
+    d.polygon([(top_inset, 0), (w - top_inset, 0), (w, h), (0, h)], fill=(212, 175, 55, 255))
+    d.polygon([(top_inset, 0), (w - top_inset, 0), (w - top_inset - 10, 12), (top_inset + 10, 12)], fill=(255, 230, 130, 255))
+    d.line([(top_inset + 5, int(h * 0.35)), (w - top_inset - 5, int(h * 0.35))], fill=(150, 110, 20, 180), width=2)
+    base_img.paste(icon, (x, y), icon)
 
 
 def fetch_flag(code, width=70):
@@ -400,36 +410,46 @@ def generate_forecast_image(cbu_rates):
 
 def generate_gold_image(gold_data):
     prices = gold_data.get("prices", [])
-    width, height = 900, 210 + 72 * len(prices) + 90
-    full = vertical_gradient(width, height, (48, 34, 10), (70, 50, 15))
+    width = 900
+    header_h = 140
+    table_header_h = 60
+    row_height = 74
+    footer_h = 70
+    height = header_h + table_header_h + row_height * len(prices) + footer_h
+
+    full = Image.new("RGB", (width, height), (255, 250, 235))
+    header = vertical_gradient(width, header_h, (196, 145, 20), (226, 178, 39))
+    full.paste(header, (0, 0))
     draw = ImageDraw.Draw(full)
 
-    title_font = load_font(FONT_BOLD_PATHS, 40)
-    header_font = load_font(FONT_BOLD_PATHS, 24)
+    draw_gold_bar_icon(full, 40, 35, 70, 70)
+
+    title_font = load_font(FONT_BOLD_PATHS, 36)
+    header_font = load_font(FONT_BOLD_PATHS, 22)
     row_font = load_font(FONT_REGULAR_PATHS, 26)
     small_font = load_font(FONT_REGULAR_PATHS, 18)
 
-    draw.text((40, 30), "🥇 OLTIN QUYMALAR NARXI", font=title_font, fill=(255, 215, 0))
-    draw.text((40, 88), "Markaziy bank rasmiy narxi", font=header_font, fill=(235, 230, 220))
+    draw.text((130, 32), "OLTIN QUYMALAR NARXI", font=title_font, fill=(255, 255, 255))
+    draw.text((130, 82), "Markaziy bank rasmiy narxi", font=header_font, fill=(255, 245, 220))
 
-    draw.text((40, 150), "Og'irligi", font=header_font, fill=(255, 215, 0))
-    draw.text((320, 150), "Sotish narxi", font=header_font, fill=(255, 215, 0))
-    draw.text((620, 150), "Qaytarib sotib olish", font=header_font, fill=(255, 215, 0))
+    y_th = header_h + 15
+    draw.text((40, y_th), "Og'irligi", font=header_font, fill=(150, 110, 20))
+    draw.text((320, y_th), "Sotish narxi", font=header_font, fill=(150, 110, 20))
+    draw.text((620, y_th), "Qaytarib sotib olish", font=header_font, fill=(150, 110, 20))
 
-    y = 200
-    row_height = 72
+    y = header_h + table_header_h
     for item in prices:
-        draw.text((40, y), f"{item['gram']} gramm", font=row_font, fill=(255, 255, 255))
-        draw.text((320, y), f"{item['sell']:,.0f} so'm".replace(",", " "), font=row_font, fill=(140, 230, 140))
-        draw.text((620, y), f"{item['buyback_ok']:,.0f} so'm".replace(",", " "), font=row_font, fill=(220, 220, 220))
-        draw.line([(40, y + row_height - 18), (width - 40, y + row_height - 18)], fill=(100, 80, 45), width=1)
+        draw.text((40, y), f"{item['gram']} gramm", font=row_font, fill=(70, 50, 15))
+        draw.text((320, y), f"{item['sell']:,.0f} so'm".replace(",", " "), font=row_font, fill=(30, 130, 60))
+        draw.text((620, y), f"{item['buyback_ok']:,.0f} so'm".replace(",", " "), font=row_font, fill=(120, 95, 55))
+        draw.line([(40, y + row_height - 20), (width - 40, y + row_height - 20)], fill=(225, 200, 150), width=1)
         y += row_height
 
     if gold_data.get("updated"):
-        draw.text((40, y + 8), f"Yangilangan: {gold_data['updated']}", font=small_font, fill=(210, 200, 170))
-    draw.text((40, height - 45), "@Bankchi_uz", font=small_font, fill=(210, 200, 170))
+        draw.text((40, y + 10), f"Yangilangan: {gold_data['updated']}", font=small_font, fill=(140, 110, 50))
+    draw.text((40, height - 40), "@Bankchi_uz", font=small_font, fill=(140, 110, 50))
 
-    full = add_diagonal_watermark(full, font_size=80)
+    full = add_diagonal_watermark(full, font_size=80, color=(180, 140, 40), opacity=45)
     path = "/tmp/gold_prices.png"
     full.save(path)
     return path
@@ -445,7 +465,7 @@ def generate_top10_image(buy_sorted_top10):
 
     title_font = load_font(FONT_BOLD_PATHS, 40)
     sub_font = load_font(FONT_BOLD_PATHS, 24)
-    draw.text((40, 28), "🏆 TOP 10 BANK", font=title_font, fill=(255, 255, 255))
+    draw.text((40, 28), "TOP 10 BANK", font=title_font, fill=(255, 255, 255))
     draw.text((40, 84), "$ DOLLAR eng qimmat sotib olayotgan banklar", font=sub_font, fill=(255, 205, 60))
 
     name_font = load_font(FONT_BOLD_PATHS, 27)
@@ -542,7 +562,8 @@ def main():
 
         try:
             buy_sorted = sorted(all_rates.items(), key=lambda x: x[1]["buy"], reverse=True)[:10]
-            top10_img = generate_top10_image(buy_sorted)
+            top10_data = [(name, r["buy"]) for name, r in buy_sorted]
+            top10_img = generate_top10_image(top10_data)
             send_telegram_photo(top10_img, caption="🏆 TOP 10 bank — $ DOLLAR eng qimmat sotib olayotgan")
         except Exception as e:
             print(f"Top10 rasm xatolik: {e}")
