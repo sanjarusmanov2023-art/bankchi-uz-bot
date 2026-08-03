@@ -1,10 +1,8 @@
 name: Bankchi_uz bot
-
 on:
   schedule:
     - cron: '0 3,7,11,15 * * *'
   workflow_dispatch:
-
 jobs:
   run-bot:
     runs-on: ubuntu-latest
@@ -13,20 +11,16 @@ jobs:
     steps:
       - name: Repository yuklab olish
         uses: actions/checkout@v4
-
       - name: Python o'rnatish
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Kutubxonalarni o'rnatish
         run: pip install -r requirements.txt
-
       - name: Botni ishga tushirish
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: python main.py
-
       - name: O'zgarishlarni saqlash
         run: |
           git config user.name "github-actions[bot]"
@@ -34,3 +28,4 @@ jobs:
           git add last_rates.json
           git diff --staged --quiet || git commit -m "Kurslarni yangilash"
           git push
+# resync
