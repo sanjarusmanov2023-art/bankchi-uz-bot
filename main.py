@@ -8,12 +8,18 @@ from datetime import datetime, timezone, timedelta
 from bs4 import BeautifulSoup
 from PIL import Image, ImageDraw, ImageFont
 
+TASHKENT_TZ = timezone(timedelta(hours=5))
+
+
+def now_tashkent_str():
+    return datetime.now(TASHKENT_TZ).strftime("%d.%m.%Y %H:%M")
+
+
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHANNEL = "@Bankchi_uz"
 STATE_FILE = "last_rates.json"
 CBU_CURRENCIES = ["USD", "EUR", "RUB", "CNY", "GBP"]
 BANK_CURRENCY = "USD"
-TASHKENT_TZ = timezone(timedelta(hours=5))
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -71,10 +77,6 @@ def load_font(paths, size):
             except Exception:
                 continue
     return ImageFont.load_default()
-
-
-def now_tashkent_str():
-    return datetime.now(TASHKENT_TZ).strftime("%d.%m.%Y %H:%M")
 
 
 def send_telegram_message(text):
@@ -277,50 +279,50 @@ def fetch_flag(code, width=70):
 
 def generate_cbu_image(rates):
     order = [c for c in ["USD", "EUR", "RUB", "CNY", "GBP"] if c in rates]
-    row_h = 110
-    header_h = 210
-    width = 1000
-    height = header_h + row_h * len(order) + 70
+    row_h = 165
+    header_h = 315
+    width = 1500
+    height = header_h + row_h * len(order) + 105
 
     full = Image.new("RGB", (width, height), (255, 255, 255))
     header = vertical_gradient(width, header_h, (6, 30, 78), (16, 110, 190))
     full.paste(header, (0, 0))
     draw = ImageDraw.Draw(full)
 
-    draw_zigzag(draw, 0, header_h * 0.78, width, header_h * 0.32, 18, 24, (90, 215, 225), 3)
-    draw_globe_watermark(full, width * 0.74, header_h + (height - header_h) * 0.52, min(width, height - header_h) * 0.4)
-    draw_coin_icon(full, 30, 25, 90)
+    draw_zigzag(draw, 0, header_h * 0.78, width, header_h * 0.32, 18, 36, (90, 215, 225), 4)
+    draw_globe_watermark(full, width * 0.74, header_h + (height - header_h) * 0.52, min(width, height - header_h) * 0.4, width=3)
+    draw_coin_icon(full, 45, 38, 135)
 
-    title_font = load_font(FONT_BOLD_PATHS, 40)
-    date_font = load_font(FONT_BOLD_PATHS, 24)
-    draw.text((135, 35), "VALYUTALAR KURSI", font=title_font, fill=(255, 255, 255))
+    title_font = load_font(FONT_BOLD_PATHS, 60)
+    date_font = load_font(FONT_BOLD_PATHS, 36)
+    draw.text((203, 53), "VALYUTALAR KURSI", font=title_font, fill=(255, 255, 255))
     date_str = rates[order[0]]["date"] if order else ""
-    draw.text((135, 90), date_str, font=date_font, fill=(210, 232, 255))
+    draw.text((203, 135), date_str, font=date_font, fill=(210, 232, 255))
 
-    name_font = load_font(FONT_BOLD_PATHS, 32)
-    sub_font = load_font(FONT_REGULAR_PATHS, 19)
-    value_font = load_font(FONT_BOLD_PATHS, 36)
-    diff_font = load_font(FONT_BOLD_PATHS, 26)
+    name_font = load_font(FONT_BOLD_PATHS, 48)
+    sub_font = load_font(FONT_REGULAR_PATHS, 29)
+    value_font = load_font(FONT_BOLD_PATHS, 54)
+    diff_font = load_font(FONT_BOLD_PATHS, 39)
 
-    y = header_h + 20
+    y = header_h + 30
     for code in order:
         info = rates[code]
-        flag = fetch_flag(CURRENCY_FLAG.get(code, "un"), 74)
+        flag = fetch_flag(CURRENCY_FLAG.get(code, "un"), 111)
         if flag:
-            full.paste(flag, (40, y + 15), flag)
-        draw.text((150, y + 5), code, font=name_font, fill=(20, 30, 60))
-        draw.text((150, y + 48), info["name"], font=sub_font, fill=(120, 120, 130))
+            full.paste(flag, (60, y + 23), flag)
+        draw.text((225, y + 8), code, font=name_font, fill=(20, 30, 60))
+        draw.text((225, y + 72), info["name"], font=sub_font, fill=(120, 120, 130))
         rate_text = f"{info['rate']:,.2f}".replace(",", " ")
-        draw.text((480, y + 22), rate_text, font=value_font, fill=(20, 30, 60))
+        draw.text((720, y + 33), rate_text, font=value_font, fill=(20, 30, 60))
         diff = info["diff"]
         arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "→")
         color = (25, 150, 60) if diff > 0 else ((205, 35, 35) if diff < 0 else (120, 120, 120))
-        draw.text((800, y + 28), f"{arrow} {diff:+.2f}", font=diff_font, fill=color)
-        draw.line([(40, y + row_h - 12), (width - 40, y + row_h - 12)], fill=(230, 230, 235), width=2)
+        draw.text((1200, y + 42), f"{arrow} {diff:+.2f}", font=diff_font, fill=color)
+        draw.line([(60, y + row_h - 18), (width - 60, y + row_h - 18)], fill=(230, 230, 235), width=3)
         y += row_h
 
-    draw.text((width - 240, height - 40), "@Bankchi_uz", font=sub_font, fill=(150, 150, 155))
-    full = add_diagonal_watermark(full, font_size=85, color=(160, 170, 190), opacity=45)
+    draw.text((width - 360, height - 60), "@Bankchi_uz", font=sub_font, fill=(150, 150, 155))
+    full = add_diagonal_watermark(full, font_size=128, color=(160, 170, 190), opacity=45)
     path = "/tmp/cbu_rates.png"
     full.save(path)
     return path
@@ -337,42 +339,42 @@ def generate_forecast_image(cbu_rates):
 
     top_color = (8, 55, 130) if up else (110, 12, 12)
     bottom_color = (20, 120, 210) if up else (185, 25, 25)
-    width, height = 900, 950
+    width, height = 1350, 1425
     full = vertical_gradient(width, height, top_color, bottom_color)
     draw = ImageDraw.Draw(full)
 
     for i in range(3):
-        draw_zigzag(draw, 0, height * 0.32 + i * 45, width, height * 0.18 + i * 35, 12, 55, (255, 255, 255), 3)
+        draw_zigzag(draw, 0, height * 0.32 + i * 68, width, height * 0.18 + i * 53, 12, 83, (255, 255, 255), 4)
 
-    flag = fetch_flag("us", 130)
+    flag = fetch_flag("us", 195)
     if flag:
-        full.paste(flag, (50, 45), flag)
+        full.paste(flag, (75, 68), flag)
 
-    title_font = load_font(FONT_BOLD_PATHS, 40)
-    draw.text((200, 55), "AQSH DOLLARI", font=title_font, fill=(255, 255, 255))
-    draw.text((200, 100), "$ DOLLAR", font=title_font, fill=(255, 255, 255))
+    title_font = load_font(FONT_BOLD_PATHS, 60)
+    draw.text((300, 83), "AQSH DOLLARI", font=title_font, fill=(255, 255, 255))
+    draw.text((300, 150), "$ DOLLAR", font=title_font, fill=(255, 255, 255))
 
-    date_font = load_font(FONT_BOLD_PATHS, 32)
-    draw.text((50, 220), usd.get("date", ""), font=date_font, fill=(255, 255, 255))
+    date_font = load_font(FONT_BOLD_PATHS, 48)
+    draw.text((75, 330), usd.get("date", ""), font=date_font, fill=(255, 255, 255))
 
-    label_font = load_font(FONT_BOLD_PATHS, 26)
-    draw.text((50, 310), "KUTILAYOTGAN KURS:", font=label_font, fill=(225, 225, 225))
-    big_font = load_font(FONT_BOLD_PATHS, 84)
+    label_font = load_font(FONT_BOLD_PATHS, 39)
+    draw.text((75, 465), "KUTILAYOTGAN KURS:", font=label_font, fill=(225, 225, 225))
+    big_font = load_font(FONT_BOLD_PATHS, 126)
     est_text = f"{estimated:,.0f}".replace(",", " ")
-    draw.text((50, 350), f"{est_text} SO'M", font=big_font, fill=(255, 255, 255))
+    draw.text((75, 525), f"{est_text} SO'M", font=big_font, fill=(255, 255, 255))
 
-    watermark_font = load_font(FONT_BOLD_PATHS, 54)
-    draw.text((50, 520), "@BANKCHI_UZ", font=watermark_font, fill=(255, 255, 255))
+    watermark_font = load_font(FONT_BOLD_PATHS, 81)
+    draw.text((75, 780), "@BANKCHI_UZ", font=watermark_font, fill=(255, 255, 255))
 
-    change_font = load_font(FONT_BOLD_PATHS, 40)
+    change_font = load_font(FONT_BOLD_PATHS, 60)
     arrow = "▲" if up else "▼"
-    draw.text((50, 650), f"{arrow} {diff:+.0f} SO'M", font=change_font, fill=(255, 255, 255))
+    draw.text((75, 975), f"{arrow} {diff:+.0f} SO'M", font=change_font, fill=(255, 255, 255))
 
-    small_font = load_font(FONT_REGULAR_PATHS, 22)
-    draw.text((50, 710), "Rasmiy bashorat emas — so'nggi tendensiyaga asoslangan taxmin", font=small_font, fill=(230, 230, 230))
-    draw.text((50, height - 55), "@Bankchi_uz", font=small_font, fill=(230, 230, 230))
+    small_font = load_font(FONT_REGULAR_PATHS, 33)
+    draw.text((75, 1065), "Rasmiy bashorat emas — so'nggi tendensiyaga asoslangan taxmin", font=small_font, fill=(230, 230, 230))
+    draw.text((75, height - 83), "@Bankchi_uz", font=small_font, fill=(230, 230, 230))
 
-    full = add_diagonal_watermark(full, font_size=70, opacity=22)
+    full = add_diagonal_watermark(full, font_size=105, opacity=22)
     path = "/tmp/forecast.png"
     full.save(path)
     return path
@@ -380,11 +382,11 @@ def generate_forecast_image(cbu_rates):
 
 def generate_gold_image(gold_data):
     prices = gold_data.get("prices", [])
-    width = 900
-    header_h = 140
-    table_header_h = 60
-    row_height = 74
-    footer_h = 70
+    width = 1350
+    header_h = 210
+    table_header_h = 90
+    row_height = 111
+    footer_h = 105
     height = header_h + table_header_h + row_height * len(prices) + footer_h
 
     full = Image.new("RGB", (width, height), (255, 250, 235))
@@ -392,89 +394,89 @@ def generate_gold_image(gold_data):
     full.paste(header, (0, 0))
     draw = ImageDraw.Draw(full)
 
-    draw_gold_bar_icon(full, 40, 35, 70, 70)
+    draw_gold_bar_icon(full, 60, 53, 105, 105)
 
-    title_font = load_font(FONT_BOLD_PATHS, 36)
-    header_font = load_font(FONT_BOLD_PATHS, 22)
-    row_font = load_font(FONT_REGULAR_PATHS, 26)
-    small_font = load_font(FONT_REGULAR_PATHS, 18)
+    title_font = load_font(FONT_BOLD_PATHS, 54)
+    header_font = load_font(FONT_BOLD_PATHS, 33)
+    row_font = load_font(FONT_REGULAR_PATHS, 39)
+    small_font = load_font(FONT_REGULAR_PATHS, 27)
 
-    draw.text((130, 32), "OLTIN QUYMALAR NARXI", font=title_font, fill=(255, 255, 255))
-    draw.text((130, 82), "Markaziy bank rasmiy narxi", font=header_font, fill=(255, 245, 220))
+    draw.text((195, 48), "OLTIN QUYMALAR NARXI", font=title_font, fill=(255, 255, 255))
+    draw.text((195, 123), "Markaziy bank rasmiy narxi", font=header_font, fill=(255, 245, 220))
 
-    y_th = header_h + 15
-    draw.text((40, y_th), "Og'irligi", font=header_font, fill=(150, 110, 20))
-    draw.text((320, y_th), "Sotish narxi", font=header_font, fill=(150, 110, 20))
-    draw.text((620, y_th), "Qaytarib sotib olish", font=header_font, fill=(150, 110, 20))
+    y_th = header_h + 23
+    draw.text((60, y_th), "Og'irligi", font=header_font, fill=(150, 110, 20))
+    draw.text((480, y_th), "Sotish narxi", font=header_font, fill=(150, 110, 20))
+    draw.text((930, y_th), "Qaytarib sotib olish", font=header_font, fill=(150, 110, 20))
 
     y = header_h + table_header_h
     for item in prices:
-        draw.text((40, y), f"{item['gram']} gramm", font=row_font, fill=(70, 50, 15))
-        draw.text((320, y), f"{item['sell']:,.0f} so'm".replace(",", " "), font=row_font, fill=(30, 130, 60))
-        draw.text((620, y), f"{item['buyback_ok']:,.0f} so'm".replace(",", " "), font=row_font, fill=(120, 95, 55))
-        draw.line([(40, y + row_height - 20), (width - 40, y + row_height - 20)], fill=(225, 200, 150), width=1)
+        draw.text((60, y), f"{item['gram']} gramm", font=row_font, fill=(70, 50, 15))
+        draw.text((480, y), f"{item['sell']:,.0f} so'm".replace(",", " "), font=row_font, fill=(30, 130, 60))
+        draw.text((930, y), f"{item['buyback_ok']:,.0f} so'm".replace(",", " "), font=row_font, fill=(120, 95, 55))
+        draw.line([(60, y + row_height - 30), (width - 60, y + row_height - 30)], fill=(225, 200, 150), width=2)
         y += row_height
 
     if gold_data.get("updated"):
-        draw.text((40, y + 10), f"Yangilangan: {gold_data['updated']}", font=small_font, fill=(140, 110, 50))
-    draw.text((40, height - 40), "@Bankchi_uz", font=small_font, fill=(140, 110, 50))
+        draw.text((60, y + 15), f"Yangilangan: {gold_data['updated']}", font=small_font, fill=(140, 110, 50))
+    draw.text((60, height - 60), "@Bankchi_uz", font=small_font, fill=(140, 110, 50))
 
-    full = add_diagonal_watermark(full, font_size=80, color=(180, 140, 40), opacity=45)
+    full = add_diagonal_watermark(full, font_size=120, color=(180, 140, 40), opacity=45)
     path = "/tmp/gold_prices.png"
     full.save(path)
     return path
 
 
 def generate_top10_image(buy_sorted_top10):
-    row_h = 78
-    header_h = 165
-    table_header_h = 50
-    width = 1000
-    height = header_h + table_header_h + row_h * len(buy_sorted_top10) + 70
+    row_h = 117
+    header_h = 248
+    table_header_h = 75
+    width = 1500
+    height = header_h + table_header_h + row_h * len(buy_sorted_top10) + 105
 
     full = Image.new("RGB", (width, height), (255, 255, 255))
     header = vertical_gradient(width, header_h, (6, 30, 78), (16, 110, 190))
     full.paste(header, (0, 0))
     draw = ImageDraw.Draw(full)
 
-    draw_globe_watermark(full, width * 0.76, header_h + (height - header_h) * 0.5, min(width, height - header_h) * 0.42)
-    draw_coin_icon(full, 30, 25, 80)
+    draw_globe_watermark(full, width * 0.76, header_h + (height - header_h) * 0.5, min(width, height - header_h) * 0.42, width=3)
+    draw_coin_icon(full, 45, 38, 120)
 
-    title_font = load_font(FONT_BOLD_PATHS, 36)
-    sub_font = load_font(FONT_BOLD_PATHS, 22)
-    date_font = load_font(FONT_BOLD_PATHS, 18)
-    draw.text((125, 25), "TOP 10 BANK", font=title_font, fill=(255, 255, 255))
-    draw.text((125, 74), "$ DOLLAR eng qimmat sotib olayotgan banklar", font=sub_font, fill=(210, 232, 255))
-    draw.text((125, 104), now_tashkent_str(), font=date_font, fill=(190, 215, 245))
+    title_font = load_font(FONT_BOLD_PATHS, 54)
+    sub_font = load_font(FONT_BOLD_PATHS, 33)
+    date_font = load_font(FONT_BOLD_PATHS, 27)
+    draw.text((188, 38), "TOP 10 BANK", font=title_font, fill=(255, 255, 255))
+    draw.text((188, 111), "$ DOLLAR eng qimmat sotib olayotgan banklar", font=sub_font, fill=(210, 232, 255))
+    draw.text((188, 156), now_tashkent_str(), font=date_font, fill=(190, 215, 245))
 
-    col_font = load_font(FONT_BOLD_PATHS, 20)
-    y_th = header_h + 12
-    draw.text((70, y_th), "Bank", font=col_font, fill=(90, 95, 110))
-    draw.text((width - 420, y_th), "Sotib olish", font=col_font, fill=(90, 95, 110))
-    draw.text((width - 220, y_th), "Sotish", font=col_font, fill=(90, 95, 110))
-    draw.line([(25, header_h + table_header_h - 5), (width - 25, header_h + table_header_h - 5)], fill=(210, 213, 222), width=2)
+    col_font = load_font(FONT_BOLD_PATHS, 30)
+    y_th = header_h + 18
+    draw.text((105, y_th), "Bank", font=col_font, fill=(90, 95, 110))
+    draw.text((width - 630, y_th), "Sotib olish", font=col_font, fill=(90, 95, 110))
+    draw.text((width - 330, y_th), "Sotish", font=col_font, fill=(90, 95, 110))
+    draw.line([(38, header_h + table_header_h - 8), (width - 38, header_h + table_header_h - 8)], fill=(210, 213, 222), width=3)
 
-    name_font = load_font(FONT_BOLD_PATHS, 27)
-    price_font = load_font(FONT_BOLD_PATHS, 27)
-    rank_font = load_font(FONT_BOLD_PATHS, 28)
+    name_font = load_font(FONT_BOLD_PATHS, 41)
+    price_font = load_font(FONT_BOLD_PATHS, 41)
+    rank_font = load_font(FONT_BOLD_PATHS, 42)
 
     y = header_h + table_header_h
     for i, (name, buy, sell) in enumerate(buy_sorted_top10, start=1):
         rank_color = (16, 100, 190) if i <= 3 else (150, 155, 165)
         if i % 2 == 0:
             draw.rectangle([(0, y), (width, y + row_h)], fill=(246, 248, 251))
-        draw.text((25, y + 22), f"{i}", font=rank_font, fill=rank_color)
-        draw.text((70, y + 22), name, font=name_font, fill=(25, 30, 48))
+        draw.text((38, y + 33), f"{i}", font=rank_font, fill=rank_color)
+        draw.text((105, y + 33), name, font=name_font, fill=(25, 30, 48))
         buy_text = f"{buy:,.0f}".replace(",", " ")
         sell_text = f"{sell:,.0f}".replace(",", " ")
-        draw.text((width - 420, y + 22), buy_text, font=price_font, fill=(20, 140, 60))
-        draw.text((width - 220, y + 22), sell_text, font=price_font, fill=(205, 95, 20))
-        draw.line([(25, y + row_h - 4), (width - 25, y + row_h - 4)], fill=(225, 227, 232), width=1)
+        draw.text((width - 630, y + 33), buy_text, font=price_font, fill=(20, 140, 60))
+        draw.text((width - 330, y + 33), sell_text, font=price_font, fill=(205, 95, 20))
+        draw.line([(38, y + row_h - 6), (width - 38, y + row_h - 6)], fill=(225, 227, 232), width=2)
         y += row_h
 
-    small_font = load_font(FONT_REGULAR_PATHS, 20)
-    draw.text((40, height - 45), "@Bankchi_uz", font=small_font, fill=(140, 145, 155))
-    full = add_diagonal_watermark(full, font_size=75, color=(160, 170, 190), opacity=40)
+    small_font = load_font(FONT_REGULAR_PATHS, 30)
+    draw.text((60, height - 68), "@Bankchi_uz", font=small_font, fill=(140, 145, 155))
+    full = add_diagonal_watermark(full, font_size=113, color=(160, 170, 190), opacity=40)
     path = "/tmp/top10_usd.png"
     full.save(path)
     return path
