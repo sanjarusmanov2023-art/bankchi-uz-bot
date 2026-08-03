@@ -355,7 +355,8 @@ def generate_forecast_image(cbu_rates):
     draw.text((300, 150), "$ DOLLAR", font=title_font, fill=(255, 255, 255))
 
     date_font = load_font(FONT_BOLD_PATHS, 48)
-    draw.text((75, 330), usd.get("date", ""), font=date_font, fill=(255, 255, 255))
+    tomorrow_str = (datetime.now(TASHKENT_TZ) + timedelta(days=1)).strftime("%d.%m.%Y")
+    draw.text((75, 330), f"Ertangi kun: {tomorrow_str}", font=date_font, fill=(255, 255, 255))
 
     label_font = load_font(FONT_BOLD_PATHS, 39)
     draw.text((75, 465), "KUTILAYOTGAN KURS:", font=label_font, fill=(225, 225, 225))
@@ -386,7 +387,7 @@ def generate_gold_image(gold_data):
     header_h = 210
     table_header_h = 90
     row_height = 111
-    footer_h = 105
+    footer_h = 135
     height = header_h + table_header_h + row_height * len(prices) + footer_h
 
     full = Image.new("RGB", (width, height), (255, 250, 235))
@@ -418,8 +419,8 @@ def generate_gold_image(gold_data):
         y += row_height
 
     if gold_data.get("updated"):
-        draw.text((60, y + 15), f"Yangilangan: {gold_data['updated']}", font=small_font, fill=(140, 110, 50))
-    draw.text((60, height - 60), "@Bankchi_uz", font=small_font, fill=(140, 110, 50))
+        draw.text((60, y + 12), f"Yangilangan: {gold_data['updated']}", font=small_font, fill=(140, 110, 50))
+    draw.text((60, height - 45), "@Bankchi_uz", font=small_font, fill=(140, 110, 50))
 
     full = add_diagonal_watermark(full, font_size=120, color=(180, 140, 40), opacity=45)
     path = "/tmp/gold_prices.png"
