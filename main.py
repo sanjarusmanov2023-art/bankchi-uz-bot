@@ -653,12 +653,7 @@ def format_news_post(news):
     lines = ["📰 <b>Valyuta birjasi (UzRVB) so'nggi yangiligi</b>"]
     lines.append(f"<i>{news['date']}</i>\n")
     lines.append(f"<b>{news['title']}</b>")
-    if news.get("excerpt"):
-        excerpt = news["excerpt"]
-        if len(excerpt) > 350:
-            excerpt = excerpt[:350].rsplit(" ", 1)[0] + "..."
-        lines.append(excerpt)
-    lines.append(f"\n🔗 Batafsil: {news['url']}")
+    lines.append(f"\n🔗 {news['url']}")
     lines.append(f"\n{CHANNEL}")
     return "\n".join(lines)
 
