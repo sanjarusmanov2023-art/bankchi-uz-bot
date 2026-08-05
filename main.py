@@ -6,7 +6,7 @@ import random
 from io import BytesIO
 from datetime import datetime, timezone, timedelta
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 TASHKENT_TZ = timezone(timedelta(hours=5))
 
@@ -20,6 +20,8 @@ CHANNEL = "@Bankchi_uz"
 STATE_FILE = "last_rates.json"
 CBU_CURRENCIES = ["USD", "EUR", "RUB", "CNY", "GBP"]
 BANK_CURRENCY = "USD"
+BANK_TIP = "✅ Banklarga borishdan oldin valyuta kursini albatta tekshiring!"
+UZRVB_NEWS_URL = "https://uzrvb.uz/oz/press-center/yangiliklar-va-elonlar/"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -79,6 +81,10 @@ def load_font(paths, size):
     return ImageFont.load_default()
 
 
+# ============================================================
+#  TELEGRAM YUBORISH
+# ============================================================
+
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHANNEL, "text": text, "parse_mode": "HTML"}
@@ -97,6 +103,10 @@ def send_telegram_photo(image_path, caption=""):
     resp.raise_for_status()
     return resp.json()
 
+
+# ============================================================
+#  MA'LUMOT OLISH (CBU, OLTIN, BANKLAR)
+# ============================================================
 
 def get_cbu_rates():
     url = "https://cbu.uz/uz/arkhiv-kursov-valyut/json/"
@@ -176,6 +186,50 @@ def get_all_bank_rates():
     return all_rates
 
 
+def get_latest_uzrvb_news():
+    """UzRVB (valyuta birjasi) saytidan eng so'nggi yangilikni oladi."""
+    resp = requests.get(UZRVB_NEWS_URL, headers=HEADERS, timeout=30)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    candidates = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if "/yangiliklar-va-elonlar/" in href and href.endswith(".htm") and "page" not in href.lower():
+            title = a.get_text(strip=True)
+            if title and len(title) > 10:
+                full_url = href if href.startswith("http") else f"https://uzrvb.uz{href}"
+                candidates.append((full_url, title))
+
+    if not candidates:
+        print("UzRVB: yangilik havolalari topilmadi (sayt strukturasi o'zgargan bo'lishi mumkin)")
+        return None
+
+    news_url, news_title = candidates[0]
+
+    date_str = None
+    excerpt = ""
+    try:
+        art_resp = requests.get(news_url, headers=HEADERS, timeout=30)
+        art_resp.raise_for_status()
+        art_soup = BeautifulSoup(art_resp.text, "html.parser")
+        art_text = re.sub(r"\s+", " ", art_soup.get_text(" ", strip=True))
+        date_match = re.search(r"(\d{2}\.\d{2}\.\d{4})", art_text)
+        date_str = date_match.group(1) if date_match else None
+        idx = art_text.find(news_title)
+        if idx != -1:
+            excerpt = art_text[idx + len(news_title):idx + len(news_title) + 400].strip()
+        else:
+            excerpt = art_text[:400]
+    except Exception as e:
+        print(f"UzRVB maqola sahifasini o'qishda xatolik: {e}")
+
+    if not date_str:
+        date_str = now_tashkent_str()[:10]
+
+    return {"title": news_title, "url": news_url, "date": date_str, "excerpt": excerpt}
+
+
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r", encoding="utf-8") as f:
@@ -187,6 +241,10 @@ def save_state(state):
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
 
+
+# ============================================================
+#  DIZAYN YORDAMCHILARI
+# ============================================================
 
 def vertical_gradient(width, height, top_color, bottom_color):
     img = Image.new("RGB", (width, height), top_color)
@@ -200,44 +258,92 @@ def vertical_gradient(width, height, top_color, bottom_color):
     return img
 
 
-def draw_zigzag(draw, x0, y0, x1, y1, n_points, amplitude, color, width=3):
-    pts = []
-    for i in range(n_points + 1):
-        x = x0 + (x1 - x0) * i / n_points
-        y = y0 + random.uniform(-amplitude, amplitude)
-        pts.append((x, y))
-    try:
-        draw.line(pts, fill=color, width=width, joint="curve")
-    except Exception:
-        draw.line(pts, fill=color, width=width)
-    return pts
+def radial_glow(width, height, cx, cy, radius, color, max_alpha=70):
+    glow = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    steps = 60
+    for i in range(steps, 0, -1):
+        a = int(max_alpha * (i / steps) ** 2)
+        r = radius * i / steps
+        gd.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(*color, a))
+    return glow
 
 
-def draw_coin_icon(base_img, x, y, size):
-    icon = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    d = ImageDraw.Draw(icon)
-    d.ellipse((0, 0, size, size), fill=(215, 218, 224, 255), outline=(140, 145, 155, 255), width=3)
-    d.ellipse((size * 0.12, size * 0.12, size * 0.88, size * 0.88), outline=(175, 180, 190, 255), width=2)
-    font = load_font(FONT_BOLD_PATHS, int(size * 0.48))
-    d_str = "$"
-    bbox = d.textbbox((0, 0), d_str, font=font)
+def dot_grid(width, height, spacing=34, radius=1, color=(255, 255, 255), alpha=18):
+    layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    d = ImageDraw.Draw(layer)
+    for x in range(0, width, spacing):
+        for y in range(0, height, spacing):
+            d.ellipse((x - radius, y - radius, x + radius, y + radius), fill=(*color, alpha))
+    return layer
+
+
+def rounded_rect(draw, box, radius, fill=None, outline=None, width=1):
+    draw.rounded_rectangle(box, radius=radius, fill=fill, outline=outline, width=width)
+
+
+def draw_pill(draw, cx, cy, text, font, fg, bg, pad_x=16, pad_y=8):
+    bbox = draw.textbbox((0, 0), text, font=font)
     w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    d.text(((size - w) / 2 - bbox[0], (size - h) / 2 - bbox[1]), d_str, font=font, fill=(45, 95, 65, 255))
-    base_img.paste(icon, (x, y), icon)
+    box = (cx - w / 2 - pad_x, cy - h / 2 - pad_y - bbox[1], cx + w / 2 + pad_x, cy + h / 2 + pad_y - bbox[1])
+    draw.rounded_rectangle(box, radius=(box[3] - box[1]) / 2, fill=bg)
+    draw.text((cx - w / 2 - bbox[0], cy - h / 2 - bbox[1]), text, font=font, fill=fg)
 
 
-def draw_globe_watermark(img, cx, cy, radius, color=(228, 233, 240), width=2):
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(overlay)
-    d.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), outline=(*color, 255), width=width)
-    for ratio in (0.35, 0.68):
-        h = radius * ratio
-        d.ellipse((cx - radius, cy - h, cx + radius, cy + h), outline=(*color, 255), width=width)
-        w = radius * ratio
-        d.ellipse((cx - w, cy - radius, cx + w, cy + radius), outline=(*color, 255), width=width)
-    d.line([(cx - radius, cy), (cx + radius, cy)], fill=(*color, 255), width=width)
-    d.line([(cx, cy - radius), (cx, cy + radius)], fill=(*color, 255), width=width)
-    img.paste(overlay, (0, 0), overlay)
+def soft_shadow_text(base_rgba, pos, text, font, fill, blur=10, offset=(0, 8), shadow_alpha=120):
+    x, y = pos
+    shadow_layer = Image.new("RGBA", base_rgba.size, (0, 0, 0, 0))
+    sd = ImageDraw.Draw(shadow_layer)
+    sd.text((x + offset[0], y + offset[1]), text, font=font, fill=(0, 0, 0, shadow_alpha))
+    shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(blur))
+    base_rgba.alpha_composite(shadow_layer)
+    d = ImageDraw.Draw(base_rgba)
+    d.text((x, y), text, font=font, fill=fill)
+
+
+def draw_money_badge(base_img, x, y, size):
+    badge = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(badge)
+    note_w, note_h = int(size * 0.86), int(size * 0.55)
+    note = Image.new("RGBA", (note_w + 20, note_h + 20), (0, 0, 0, 0))
+    nd = ImageDraw.Draw(note)
+    nd.rounded_rectangle((10, 10, note_w + 10, note_h + 10), radius=10, fill=(235, 244, 255, 255), outline=(150, 180, 220, 255), width=2)
+    nd.rounded_rectangle((22, 22, note_w - 2, note_h - 2), radius=6, outline=(180, 205, 235, 255), width=1)
+    note = note.rotate(-16, expand=True, resample=Image.BICUBIC)
+    badge.paste(note, (int(size * 0.02), int(size * 0.30)), note)
+    coin_d = int(size * 0.62)
+    cx, cy = int(size * 0.55), int(size * 0.42)
+    d.ellipse((cx - coin_d // 2, cy - coin_d // 2, cx + coin_d // 2, cy + coin_d // 2), fill=(255, 205, 60, 255), outline=(200, 150, 20, 255), width=3)
+    d.ellipse((cx - coin_d // 2 + 7, cy - coin_d // 2 + 7, cx + coin_d // 2 - 7, cy + coin_d // 2 - 7), outline=(230, 180, 50, 255), width=2)
+    dollar_font = load_font(FONT_BOLD_PATHS, int(coin_d * 0.5))
+    bbox = d.textbbox((0, 0), "$", font=dollar_font)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    d.text((cx - w / 2 - bbox[0], cy - h / 2 - bbox[1]), "$", font=dollar_font, fill=(140, 95, 10, 255))
+    base_img.paste(badge, (x, y), badge)
+
+
+def draw_gold_bar_badge(base_img, x, y, size):
+    badge = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(badge)
+    w, h = int(size * 0.9), int(size * 0.55)
+    ox, oy = int(size * 0.05), int(size * 0.28)
+    top_inset = int(w * 0.16)
+    d.polygon([(ox + top_inset, oy), (ox + w - top_inset, oy), (ox + w, oy + h), (ox, oy + h)], fill=(255, 210, 90, 255), outline=(180, 130, 20, 255))
+    d.polygon([(ox + top_inset, oy), (ox + w - top_inset, oy), (ox + w - top_inset - 10, oy + 12), (ox + top_inset + 10, oy + 12)], fill=(255, 238, 170, 255))
+    d.line([(ox + top_inset + 8, oy + int(h * 0.4)), (ox + w - top_inset - 8, oy + int(h * 0.4))], fill=(190, 140, 30, 180), width=2)
+    base_img.paste(badge, (x, y), badge)
+
+
+def draw_rank_badge(draw, cx, cy, r, num, top3=False):
+    fill = (255, 215, 80) if top3 else (230, 233, 240)
+    outline = (200, 150, 20) if top3 else (190, 195, 205)
+    text_fill = (110, 75, 10) if top3 else (110, 115, 128)
+    draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=fill, outline=outline, width=2)
+    f = load_font(FONT_BOLD_PATHS, int(r * 1.05))
+    t = str(num)
+    bbox = draw.textbbox((0, 0), t, font=f)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text((cx - w / 2 - bbox[0], cy - h / 2 - bbox[1]), t, font=f, fill=text_fill)
 
 
 def add_diagonal_watermark(img, text="@BANKCHI_UZ", opacity=32, font_size=100, angle=-25, color=(255, 255, 255)):
@@ -254,77 +360,93 @@ def add_diagonal_watermark(img, text="@BANKCHI_UZ", opacity=32, font_size=100, a
     return combined.convert("RGB")
 
 
-def draw_gold_bar_icon(base_img, x, y, w, h):
-    icon = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(icon)
-    top_inset = int(w * 0.18)
-    d.polygon([(top_inset, 0), (w - top_inset, 0), (w, h), (0, h)], fill=(212, 175, 55, 255))
-    d.polygon([(top_inset, 0), (w - top_inset, 0), (w - top_inset - 10, 12), (top_inset + 10, 12)], fill=(255, 230, 130, 255))
-    d.line([(top_inset + 5, int(h * 0.35)), (w - top_inset - 5, int(h * 0.35))], fill=(150, 110, 20, 180), width=2)
-    base_img.paste(icon, (x, y), icon)
-
-
-def fetch_flag(code, width=70):
+def fetch_flag(code, width=92):
     try:
         url = f"https://flagcdn.com/w80/{code}.png"
         resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         img = Image.open(BytesIO(resp.content)).convert("RGBA")
         h = int(img.height * width / img.width)
-        return img.resize((width, h))
+        return img.resize((width, h), Image.LANCZOS)
     except Exception as e:
         print(f"Bayroq topilmadi ({code}): {e}")
         return None
 
 
+# ============================================================
+#  RASM YARATISH
+# ============================================================
+
 def generate_cbu_image(rates):
     order = [c for c in ["USD", "EUR", "RUB", "CNY", "GBP"] if c in rates]
-    row_h = 165
-    header_h = 315
+    row_h = 158
+    header_h = 300
     width = 1500
-    height = header_h + row_h * len(order) + 105
+    card_pad = 40
+    height = header_h + row_h * len(order) + 90
 
-    full = Image.new("RGB", (width, height), (255, 255, 255))
-    header = vertical_gradient(width, header_h, (6, 30, 78), (16, 110, 190))
-    full.paste(header, (0, 0))
-    draw = ImageDraw.Draw(full)
+    canvas = Image.new("RGBA", (width, height), (244, 247, 251, 255))
+    header = vertical_gradient(width, header_h + 30, (5, 22, 66), (18, 96, 175)).convert("RGBA")
+    header.alpha_composite(radial_glow(width, header_h + 30, width * 0.85, -40, 420, (80, 190, 255), 90))
+    header.alpha_composite(dot_grid(width, header_h + 30, spacing=30, alpha=14))
+    canvas.alpha_composite(header, (0, 0))
+    draw = ImageDraw.Draw(canvas)
 
-    draw_zigzag(draw, 0, header_h * 0.78, width, header_h * 0.32, 18, 36, (90, 215, 225), 4)
-    draw_globe_watermark(full, width * 0.74, header_h + (height - header_h) * 0.52, min(width, height - header_h) * 0.4, width=3)
-    draw_coin_icon(full, 45, 38, 135)
+    draw_money_badge(canvas, 44, 40, 120)
 
-    title_font = load_font(FONT_BOLD_PATHS, 60)
-    date_font = load_font(FONT_BOLD_PATHS, 36)
-    draw.text((203, 53), "VALYUTALAR KURSI", font=title_font, fill=(255, 255, 255))
-    date_str = rates[order[0]]["date"] if order else ""
-    draw.text((203, 135), date_str, font=date_font, fill=(210, 232, 255))
+    title_font = load_font(FONT_BOLD_PATHS, 56)
+    sub_font = load_font(FONT_REGULAR_PATHS, 28)
+    date_font = load_font(FONT_BOLD_PATHS, 30)
 
-    name_font = load_font(FONT_BOLD_PATHS, 48)
-    sub_font = load_font(FONT_REGULAR_PATHS, 29)
-    value_font = load_font(FONT_BOLD_PATHS, 54)
-    diff_font = load_font(FONT_BOLD_PATHS, 39)
+    draw.text((188, 46), "VALYUTALAR KURSI", font=title_font, fill=(255, 255, 255))
+    draw.text((188, 112), "Markaziy bank rasmiy ma'lumotlari", font=sub_font, fill=(190, 215, 245))
+    date_str = rates[order[0]]["date"] if order else now_tashkent_str()
+    draw_pill(draw, width - 150, 62, date_str, date_font, (15, 40, 90), (255, 255, 255))
 
-    y = header_h + 30
+    name_font = load_font(FONT_BOLD_PATHS, 44)
+    sub2_font = load_font(FONT_REGULAR_PATHS, 26)
+    value_font = load_font(FONT_BOLD_PATHS, 50)
+    pill_font = load_font(FONT_BOLD_PATHS, 30)
+
+    y = header_h + 24
     for code in order:
         info = rates[code]
-        flag = fetch_flag(CURRENCY_FLAG.get(code, "un"), 111)
+        card_box = (card_pad, y, width - card_pad, y + row_h - 16)
+        rounded_rect(draw, card_box, 22, fill=(255, 255, 255))
+
+        flag = fetch_flag(CURRENCY_FLAG.get(code, "un"), 92)
         if flag:
-            full.paste(flag, (60, y + 23), flag)
-        draw.text((225, y + 8), code, font=name_font, fill=(20, 30, 60))
-        draw.text((225, y + 72), info["name"], font=sub_font, fill=(120, 120, 130))
+            fw, fh = flag.size
+            fy = y + (row_h - 16 - fh) // 2
+            mask = Image.new("L", flag.size, 0)
+            ImageDraw.Draw(mask).rounded_rectangle((0, 0, fw, fh), radius=10, fill=255)
+            canvas.paste(flag, (card_pad + 26, fy), mask)
+
+        tx = card_pad + 26 + 92 + 26
+        draw.text((tx, y + 22), code, font=name_font, fill=(20, 30, 60))
+        draw.text((tx, y + 78), info["name"], font=sub2_font, fill=(120, 128, 145))
+
         rate_text = f"{info['rate']:,.2f}".replace(",", " ")
-        draw.text((720, y + 33), rate_text, font=value_font, fill=(20, 30, 60))
+        rbbox = draw.textbbox((0, 0), rate_text, font=value_font)
+        rw = rbbox[2] - rbbox[0]
+        draw.text((width - 460 - rw, y + (row_h - 16 - (rbbox[3] - rbbox[1])) // 2 - rbbox[1]), rate_text, font=value_font, fill=(20, 30, 60))
+
         diff = info["diff"]
-        arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "→")
-        color = (25, 150, 60) if diff > 0 else ((205, 35, 35) if diff < 0 else (120, 120, 120))
-        draw.text((1200, y + 42), f"{arrow} {diff:+.2f}", font=diff_font, fill=color)
-        draw.line([(60, y + row_h - 18), (width - 60, y + row_h - 18)], fill=(230, 230, 235), width=3)
+        up = diff > 0
+        flat = diff == 0
+        arrow = "▲" if up else ("▼" if not flat else "→")
+        pill_bg = (224, 247, 232) if up else ((252, 228, 228) if not flat else (235, 235, 238))
+        pill_fg = (20, 140, 70) if up else ((195, 40, 40) if not flat else (110, 110, 115))
+        draw_pill(draw, width - card_pad - 140, y + (row_h - 16) // 2, f"{arrow} {diff:+.2f}", pill_font, pill_fg, pill_bg)
+
         y += row_h
 
-    draw.text((width - 360, height - 60), "@Bankchi_uz", font=sub_font, fill=(150, 150, 155))
-    full = add_diagonal_watermark(full, font_size=128, color=(160, 170, 190), opacity=45)
+    small_font = load_font(FONT_REGULAR_PATHS, 28)
+    draw.text((card_pad, height - 56), "@Bankchi_uz", font=small_font, fill=(140, 148, 165))
+    full_rgb = canvas.convert("RGB")
+    full_rgb = add_diagonal_watermark(full_rgb, font_size=120, color=(150, 165, 195), opacity=30)
     path = "/tmp/cbu_rates.png"
-    full.save(path)
+    full_rgb.save(path)
     return path
 
 
@@ -333,155 +455,175 @@ def generate_forecast_image(cbu_rates):
     if not usd:
         return None
     diff = usd["diff"]
-    current = usd["rate"]
-    estimated = current + diff
+    rate = usd["rate"]
+    estimated = rate + diff
     up = diff >= 0
 
-    top_color = (8, 55, 130) if up else (110, 12, 12)
-    bottom_color = (20, 120, 210) if up else (185, 25, 25)
-    width, height = 1350, 1425
-    full = vertical_gradient(width, height, top_color, bottom_color)
-    draw = ImageDraw.Draw(full)
+    top_color = (7, 92, 60) if up else (120, 14, 14)
+    bottom_color = (14, 150, 95) if up else (196, 30, 30)
+    width, height = 1350, 980
+    canvas = vertical_gradient(width, height, top_color, bottom_color).convert("RGBA")
+    canvas.alpha_composite(radial_glow(width, height, width * 0.12, height * 0.08, 480, (255, 255, 255), 40))
+    canvas.alpha_composite(dot_grid(width, height, spacing=36, alpha=16))
 
-    for i in range(3):
-        draw_zigzag(draw, 0, height * 0.32 + i * 68, width, height * 0.18 + i * 53, 12, 83, (255, 255, 255), 4)
+    note_layer = Image.new("RGBA", (620, 380), (0, 0, 0, 0))
+    nd = ImageDraw.Draw(note_layer)
+    nd.rounded_rectangle((0, 0, 620, 380), radius=26, fill=(255, 255, 255, 26), outline=(255, 255, 255, 55), width=3)
+    nd.rounded_rectangle((22, 22, 598, 358), radius=16, outline=(255, 255, 255, 40), width=2)
+    nd.ellipse((260, 90, 360, 190), outline=(255, 255, 255, 50), width=3)
+    df = load_font(FONT_BOLD_PATHS, 60)
+    nd.text((288, 110), "$", font=df, fill=(255, 255, 255, 55))
+    note_layer = note_layer.rotate(-13, expand=True, resample=Image.BICUBIC)
+    canvas.paste(note_layer, (width - 560, 40), note_layer)
 
-    flag = fetch_flag("us", 195)
+    draw = ImageDraw.Draw(canvas)
+    flag = fetch_flag("us", 140)
     if flag:
-        full.paste(flag, (75, 68), flag)
+        fmask = Image.new("L", flag.size, 0)
+        ImageDraw.Draw(fmask).rounded_rectangle((0, 0, *flag.size), radius=14, fill=255)
+        canvas.paste(flag, (70, 64), fmask)
 
-    title_font = load_font(FONT_BOLD_PATHS, 60)
-    draw.text((300, 83), "AQSH DOLLARI", font=title_font, fill=(255, 255, 255))
-    draw.text((300, 150), "$ DOLLAR", font=title_font, fill=(255, 255, 255))
+    title_font = load_font(FONT_BOLD_PATHS, 52)
+    draw.text((235, 70), "AQSH DOLLARI", font=title_font, fill=(255, 255, 255))
+    draw.text((235, 130), "$ DOLLAR", font=title_font, fill=(255, 255, 255))
 
-    date_font = load_font(FONT_BOLD_PATHS, 48)
     tomorrow_str = (datetime.now(TASHKENT_TZ) + timedelta(days=1)).strftime("%d.%m.%Y")
-    draw.text((75, 330), f"Ertangi kun: {tomorrow_str}", font=date_font, fill=(255, 255, 255))
+    date_pill_font = load_font(FONT_BOLD_PATHS, 30)
+    draw_pill(draw, 200, 270, f"Ertaga: {tomorrow_str}", date_pill_font, top_color, (255, 255, 255), pad_x=22, pad_y=12)
 
-    label_font = load_font(FONT_BOLD_PATHS, 39)
-    draw.text((75, 465), "KUTILAYOTGAN KURS:", font=label_font, fill=(225, 225, 225))
-    big_font = load_font(FONT_BOLD_PATHS, 126)
-    est_text = f"{estimated:,.0f}".replace(",", " ")
-    draw.text((75, 525), f"{est_text} SO'M", font=big_font, fill=(255, 255, 255))
+    label_font = load_font(FONT_BOLD_PATHS, 32)
+    draw.text((70, 375), "KUTILAYOTGAN KURS", font=label_font, fill=(230, 230, 230))
 
-    watermark_font = load_font(FONT_BOLD_PATHS, 81)
-    draw.text((75, 780), "@BANKCHI_UZ", font=watermark_font, fill=(255, 255, 255))
+    big_font = load_font(FONT_BOLD_PATHS, 118)
+    est_text = f"{estimated:,.0f}".replace(",", " ") + " SO'M"
+    soft_shadow_text(canvas, (68, 425), est_text, big_font, (255, 255, 255, 255), blur=10, offset=(0, 8), shadow_alpha=120)
+    draw = ImageDraw.Draw(canvas)
 
-    change_font = load_font(FONT_BOLD_PATHS, 60)
+    change_font = load_font(FONT_BOLD_PATHS, 40)
     arrow = "▲" if up else "▼"
-    draw.text((75, 975), f"{arrow} {diff:+.0f} SO'M", font=change_font, fill=(255, 255, 255))
+    draw_pill(draw, 70 + 145, 645, f"{arrow} {diff:+.0f} so'm", change_font, top_color, (255, 255, 255), pad_x=26, pad_y=15)
 
-    small_font = load_font(FONT_REGULAR_PATHS, 33)
-    draw.text((75, 1065), "Rasmiy bashorat emas — so'nggi tendensiyaga asoslangan taxmin", font=small_font, fill=(230, 230, 230))
-    draw.text((75, height - 83), "@Bankchi_uz", font=small_font, fill=(230, 230, 230))
+    small_font = load_font(FONT_REGULAR_PATHS, 28)
+    draw.text((70, 725), "Rasmiy bashorat emas — so'nggi tendensiyaga\nasoslangan taxmin", font=small_font, fill=(235, 235, 235))
 
-    full = add_diagonal_watermark(full, font_size=105, opacity=22)
+    watermark_font = load_font(FONT_BOLD_PATHS, 64)
+    draw.text((70, height - 130), "@BANKCHI_UZ", font=watermark_font, fill=(255, 255, 255))
+    draw.text((70, height - 64), "Toshkent bank va valyuta kurslari", font=small_font, fill=(225, 225, 225))
+
+    full_rgb = canvas.convert("RGB")
+    full_rgb = add_diagonal_watermark(full_rgb, font_size=95, opacity=16)
     path = "/tmp/forecast.png"
-    full.save(path)
+    full_rgb.save(path)
     return path
 
 
 def generate_gold_image(gold_data):
     prices = gold_data.get("prices", [])
+    row_h = 130
+    header_h = 220
     width = 1350
-    header_h = 210
-    table_header_h = 90
-    row_height = 111
-    footer_h = 135
-    height = header_h + table_header_h + row_height * len(prices) + footer_h
+    card_pad = 32
+    height = header_h + row_h * len(prices) + 110
 
-    full = Image.new("RGB", (width, height), (255, 250, 235))
-    header = vertical_gradient(width, header_h, (196, 145, 20), (226, 178, 39))
-    full.paste(header, (0, 0))
-    draw = ImageDraw.Draw(full)
+    canvas = Image.new("RGBA", (width, height), (247, 244, 236, 255))
+    header = vertical_gradient(width, header_h + 30, (150, 105, 10), (218, 168, 40)).convert("RGBA")
+    header.alpha_composite(dot_grid(width, header_h + 30, spacing=30, color=(255, 255, 255), alpha=16))
+    canvas.alpha_composite(header, (0, 0))
+    draw = ImageDraw.Draw(canvas)
 
-    draw_gold_bar_icon(full, 60, 53, 105, 105)
+    draw_gold_bar_badge(canvas, 40, 34, 130)
+    title_font = load_font(FONT_BOLD_PATHS, 50)
+    sub_font = load_font(FONT_REGULAR_PATHS, 27)
+    draw.text((185, 44), "OLTIN QUYMALAR NARXI", font=title_font, fill=(255, 255, 255))
+    draw.text((185, 108), "Markaziy bank rasmiy narxi", font=sub_font, fill=(255, 244, 215))
 
-    title_font = load_font(FONT_BOLD_PATHS, 54)
-    header_font = load_font(FONT_BOLD_PATHS, 33)
-    row_font = load_font(FONT_REGULAR_PATHS, 39)
-    small_font = load_font(FONT_REGULAR_PATHS, 27)
+    col_font = load_font(FONT_BOLD_PATHS, 26)
+    y_th = header_h - 4
+    draw.text((card_pad + 16, y_th), "Og'irligi", font=col_font, fill=(255, 255, 255))
+    draw.text((width * 0.45, y_th), "Sotish narxi", font=col_font, fill=(255, 255, 255))
+    draw.text((width * 0.72, y_th), "Qaytarib sotib olish", font=col_font, fill=(255, 255, 255))
 
-    draw.text((195, 48), "OLTIN QUYMALAR NARXI", font=title_font, fill=(255, 255, 255))
-    draw.text((195, 123), "Markaziy bank rasmiy narxi", font=header_font, fill=(255, 245, 220))
-
-    y_th = header_h + 23
-    draw.text((60, y_th), "Og'irligi", font=header_font, fill=(150, 110, 20))
-    draw.text((480, y_th), "Sotish narxi", font=header_font, fill=(150, 110, 20))
-    draw.text((930, y_th), "Qaytarib sotib olish", font=header_font, fill=(150, 110, 20))
-
-    y = header_h + table_header_h
+    name_font = load_font(FONT_BOLD_PATHS, 36)
+    price_font = load_font(FONT_BOLD_PATHS, 34)
+    y = header_h + 34
     for item in prices:
-        draw.text((60, y), f"{item['gram']} gramm", font=row_font, fill=(70, 50, 15))
-        draw.text((480, y), f"{item['sell']:,.0f} so'm".replace(",", " "), font=row_font, fill=(30, 130, 60))
-        draw.text((930, y), f"{item['buyback_ok']:,.0f} so'm".replace(",", " "), font=row_font, fill=(120, 95, 55))
-        draw.line([(60, y + row_height - 30), (width - 60, y + row_height - 30)], fill=(225, 200, 150), width=2)
-        y += row_height
+        card_box = (card_pad, y, width - card_pad, y + row_h - 16)
+        rounded_rect(draw, card_box, 20, fill=(255, 255, 255))
+        draw.text((card_pad + 24, y + (row_h - 16) // 2 - 20), f"{item['gram']} gramm", font=name_font, fill=(70, 50, 15))
+        sell_text = f"{item['sell']:,.0f} so'm".replace(",", " ")
+        draw.text((width * 0.45, y + (row_h - 16) // 2 - 18), sell_text, font=price_font, fill=(25, 140, 70))
+        buy_text = f"{item['buyback_ok']:,.0f} so'm".replace(",", " ")
+        draw.text((width * 0.72, y + (row_h - 16) // 2 - 18), buy_text, font=price_font, fill=(150, 110, 40))
+        y += row_h
 
+    small_font = load_font(FONT_REGULAR_PATHS, 26)
     if gold_data.get("updated"):
-        draw.text((60, y + 12), f"Yangilangan: {gold_data['updated']}", font=small_font, fill=(140, 110, 50))
-    draw.text((60, height - 45), "@Bankchi_uz", font=small_font, fill=(140, 110, 50))
+        draw.text((card_pad, y + 10), f"Yangilangan: {gold_data['updated']}", font=small_font, fill=(140, 110, 50))
+    draw.text((card_pad, height - 46), "@Bankchi_uz", font=small_font, fill=(140, 110, 50))
 
-    full = add_diagonal_watermark(full, font_size=120, color=(180, 140, 40), opacity=45)
+    full_rgb = canvas.convert("RGB")
+    full_rgb = add_diagonal_watermark(full_rgb, font_size=115, color=(190, 150, 50), opacity=35)
     path = "/tmp/gold_prices.png"
-    full.save(path)
+    full_rgb.save(path)
     return path
 
 
 def generate_top10_image(buy_sorted_top10):
-    row_h = 117
-    header_h = 248
-    table_header_h = 75
+    row_h = 118
+    header_h = 230
     width = 1500
-    height = header_h + table_header_h + row_h * len(buy_sorted_top10) + 105
+    card_pad = 32
+    height = header_h + row_h * len(buy_sorted_top10) + 100
 
-    full = Image.new("RGB", (width, height), (255, 255, 255))
-    header = vertical_gradient(width, header_h, (6, 30, 78), (16, 110, 190))
-    full.paste(header, (0, 0))
-    draw = ImageDraw.Draw(full)
+    canvas = Image.new("RGBA", (width, height), (244, 247, 251, 255))
+    header = vertical_gradient(width, header_h + 30, (5, 22, 66), (18, 96, 175)).convert("RGBA")
+    header.alpha_composite(radial_glow(width, header_h + 30, width * 0.85, -40, 380, (80, 190, 255), 90))
+    header.alpha_composite(dot_grid(width, header_h + 30, spacing=30, alpha=14))
+    canvas.alpha_composite(header, (0, 0))
+    draw = ImageDraw.Draw(canvas)
 
-    draw_globe_watermark(full, width * 0.76, header_h + (height - header_h) * 0.5, min(width, height - header_h) * 0.42, width=3)
-    draw_coin_icon(full, 45, 38, 120)
+    draw_money_badge(canvas, 40, 32, 110)
 
-    title_font = load_font(FONT_BOLD_PATHS, 54)
-    sub_font = load_font(FONT_BOLD_PATHS, 33)
-    date_font = load_font(FONT_BOLD_PATHS, 27)
-    draw.text((188, 38), "TOP 10 BANK", font=title_font, fill=(255, 255, 255))
-    draw.text((188, 111), "$ DOLLAR eng qimmat sotib olayotgan banklar", font=sub_font, fill=(210, 232, 255))
-    draw.text((188, 156), now_tashkent_str(), font=date_font, fill=(190, 215, 245))
+    title_font = load_font(FONT_BOLD_PATHS, 48)
+    sub_font = load_font(FONT_REGULAR_PATHS, 26)
+    draw.text((165, 34), "TOP 10 BANK", font=title_font, fill=(255, 255, 255))
+    draw.text((165, 92), "$ DOLLAR eng qimmat sotib olayotgan banklar", font=sub_font, fill=(210, 232, 255))
+    date_font = load_font(FONT_BOLD_PATHS, 26)
+    draw_pill(draw, width - 140, 60, now_tashkent_str(), date_font, (15, 40, 90), (255, 255, 255), pad_x=18, pad_y=10)
 
-    col_font = load_font(FONT_BOLD_PATHS, 30)
-    y_th = header_h + 18
-    draw.text((105, y_th), "Bank", font=col_font, fill=(90, 95, 110))
-    draw.text((width - 630, y_th), "Sotib olish", font=col_font, fill=(90, 95, 110))
-    draw.text((width - 330, y_th), "Sotish", font=col_font, fill=(90, 95, 110))
-    draw.line([(38, header_h + table_header_h - 8), (width - 38, header_h + table_header_h - 8)], fill=(210, 213, 222), width=3)
+    col_font = load_font(FONT_BOLD_PATHS, 24)
+    y_th = header_h - 6
+    draw.text((card_pad + 80, y_th), "Bank", font=col_font, fill=(255, 255, 255))
+    draw.text((width - 560, y_th), "Sotib olish", font=col_font, fill=(255, 255, 255))
+    draw.text((width - 280, y_th), "Sotish", font=col_font, fill=(255, 255, 255))
 
-    name_font = load_font(FONT_BOLD_PATHS, 41)
-    price_font = load_font(FONT_BOLD_PATHS, 41)
-    rank_font = load_font(FONT_BOLD_PATHS, 42)
-
-    y = header_h + table_header_h
+    name_font = load_font(FONT_BOLD_PATHS, 34)
+    price_font = load_font(FONT_BOLD_PATHS, 34)
+    y = header_h + 26
     for i, (name, buy, sell) in enumerate(buy_sorted_top10, start=1):
-        rank_color = (16, 100, 190) if i <= 3 else (150, 155, 165)
-        if i % 2 == 0:
-            draw.rectangle([(0, y), (width, y + row_h)], fill=(246, 248, 251))
-        draw.text((38, y + 33), f"{i}", font=rank_font, fill=rank_color)
-        draw.text((105, y + 33), name, font=name_font, fill=(25, 30, 48))
+        card_box = (card_pad, y, width - card_pad, y + row_h - 14)
+        rounded_rect(draw, card_box, 20, fill=(255, 255, 255))
+        cy = y + (row_h - 14) // 2
+        draw_rank_badge(draw, card_pad + 38, cy, 26, i, top3=(i <= 3))
+        draw.text((card_pad + 82, cy - 22), name, font=name_font, fill=(25, 30, 48))
         buy_text = f"{buy:,.0f}".replace(",", " ")
         sell_text = f"{sell:,.0f}".replace(",", " ")
-        draw.text((width - 630, y + 33), buy_text, font=price_font, fill=(20, 140, 60))
-        draw.text((width - 330, y + 33), sell_text, font=price_font, fill=(205, 95, 20))
-        draw.line([(38, y + row_h - 6), (width - 38, y + row_h - 6)], fill=(225, 227, 232), width=2)
+        draw.text((width - 560, cy - 20), buy_text, font=price_font, fill=(20, 140, 60))
+        draw.text((width - 280, cy - 20), sell_text, font=price_font, fill=(205, 95, 20))
         y += row_h
 
-    small_font = load_font(FONT_REGULAR_PATHS, 30)
-    draw.text((60, height - 68), "@Bankchi_uz", font=small_font, fill=(140, 145, 155))
-    full = add_diagonal_watermark(full, font_size=113, color=(160, 170, 190), opacity=40)
+    small_font = load_font(FONT_REGULAR_PATHS, 26)
+    draw.text((card_pad, height - 52), "@Bankchi_uz", font=small_font, fill=(140, 145, 155))
+    full_rgb = canvas.convert("RGB")
+    full_rgb = add_diagonal_watermark(full_rgb, font_size=110, color=(160, 170, 190), opacity=32)
     path = "/tmp/top10_usd.png"
-    full.save(path)
+    full_rgb.save(path)
     return path
 
+
+# ============================================================
+#  MATNLI POSTLAR
+# ============================================================
 
 def format_buyers_post(all_rates):
     buy_sorted = sorted(all_rates.items(), key=lambda x: x[1]["buy"], reverse=True)
@@ -490,6 +632,7 @@ def format_buyers_post(all_rates):
     lines.append("<i>(dollaringizni sotmoqchi bo'lsangiz foydali)</i>\n")
     for name, r in buy_sorted:
         lines.append(f"{name}: {r['buy']:,.0f} so'm".replace(",", " "))
+    lines.append(f"\n{BANK_TIP}")
     lines.append(f"\n{CHANNEL}")
     return "\n".join(lines)
 
@@ -501,9 +644,28 @@ def format_sellers_post(all_rates):
     lines.append("<i>(dollar sotib olmoqchi bo'lsangiz foydali)</i>\n")
     for name, r in sell_sorted:
         lines.append(f"{name}: {r['sell']:,.0f} so'm".replace(",", " "))
+    lines.append(f"\n{BANK_TIP}")
     lines.append(f"\n{CHANNEL}")
     return "\n".join(lines)
 
+
+def format_news_post(news):
+    lines = ["📰 <b>Valyuta birjasi (UzRVB) so'nggi yangiligi</b>"]
+    lines.append(f"<i>{news['date']}</i>\n")
+    lines.append(f"<b>{news['title']}</b>")
+    if news.get("excerpt"):
+        excerpt = news["excerpt"]
+        if len(excerpt) > 350:
+            excerpt = excerpt[:350].rsplit(" ", 1)[0] + "..."
+        lines.append(excerpt)
+    lines.append(f"\n🔗 Batafsil: {news['url']}")
+    lines.append(f"\n{CHANNEL}")
+    return "\n".join(lines)
+
+
+# ============================================================
+#  ASOSIY DASTUR
+# ============================================================
 
 def main():
     state = load_state()
@@ -562,7 +724,7 @@ def main():
             buy_sorted = sorted(all_rates.items(), key=lambda x: x[1]["buy"], reverse=True)[:10]
             top10_data = [(name, r["buy"], r["sell"]) for name, r in buy_sorted]
             top10_img = generate_top10_image(top10_data)
-            send_telegram_photo(top10_img, caption="🏆 TOP 10 bank — $ DOLLAR eng qimmat sotib olayotgan")
+            send_telegram_photo(top10_img, caption=f"🏆 TOP 10 bank — $ DOLLAR eng qimmat sotib olayotgan\n\n{BANK_TIP}")
         except Exception as e:
             print(f"Top10 rasm xatolik: {e}")
 
@@ -570,6 +732,17 @@ def main():
         print("Bank reytingi (matn + rasm) yuborildi")
     else:
         print("Bank kurslari o'zgarmagan yoki mavjud emas")
+
+    try:
+        news = get_latest_uzrvb_news()
+        if news and state.get("news_url") != news["url"]:
+            send_telegram_message(format_news_post(news))
+            new_state["news_url"] = news["url"]
+            print("UzRVB yangiligi yuborildi")
+        else:
+            print("UzRVB yangiligi o'zgarmagan yoki topilmadi")
+    except Exception as e:
+        print(f"UzRVB yangiliklarini olishda xatolik (o'tkazib yuborildi): {e}")
 
     save_state(new_state)
 
