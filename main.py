@@ -82,7 +82,7 @@ def load_font(paths, size):
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHANNEL, "text": text, "parse_mode": "HTML"}
-    resp = requests.post(url, data=payload, timeout=15)
+    resp = requests.post(url, data=payload, timeout=30)
     resp.raise_for_status()
     return resp.json()
 
@@ -100,7 +100,7 @@ def send_telegram_photo(image_path, caption=""):
 
 def get_cbu_rates():
     url = "https://cbu.uz/uz/arkhiv-kursov-valyut/json/"
-    resp = requests.get(url, headers=HEADERS, timeout=15)
+    resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     data = resp.json()
     rates = {}
@@ -118,7 +118,7 @@ def get_cbu_rates():
 
 def get_cbu_gold():
     url = "https://cbu.uz/uz/banknotes-coins/gold-bars/prices/"
-    resp = requests.get(url, headers=HEADERS, timeout=15)
+    resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
     text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
@@ -144,7 +144,7 @@ def get_cbu_gold():
 
 def get_bank_rate(slug):
     url = f"https://bank.uz/uz/currency/bank/{slug}"
-    resp = requests.get(url, headers=HEADERS, timeout=15)
+    resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
     text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
@@ -267,7 +267,7 @@ def draw_gold_bar_icon(base_img, x, y, w, h):
 def fetch_flag(code, width=70):
     try:
         url = f"https://flagcdn.com/w80/{code}.png"
-        resp = requests.get(url, headers=HEADERS, timeout=8)
+        resp = requests.get(url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         img = Image.open(BytesIO(resp.content)).convert("RGBA")
         h = int(img.height * width / img.width)
@@ -509,35 +509,46 @@ def main():
     state = load_state()
     new_state = dict(state)
 
-    cbu_rates = get_cbu_rates()
-    gold = get_cbu_gold()
-    cbu_key = json.dumps(cbu_rates, sort_keys=True) + json.dumps(gold, sort_keys=True)
+    cbu_ok = True
+    try:
+        cbu_rates = get_cbu_rates()
+        gold = get_cbu_gold()
+    except Exception as e:
+        print(f"CBU ma'lumotlarini olishda xatolik (o'tkazib yuborildi): {e}")
+        cbu_rates = {}
+        gold = {"updated": None, "prices": []}
+        cbu_ok = False
 
-    if state.get("cbu") != cbu_key:
-        try:
-            cbu_img = generate_cbu_image(cbu_rates)
-            send_telegram_photo(cbu_img, caption="📊 Markaziy bank rasmiy kursi")
-        except Exception as e:
-            print(f"CBU rasm xatolik: {e}")
+    if cbu_ok:
+        cbu_key = json.dumps(cbu_rates, sort_keys=True) + json.dumps(gold, sort_keys=True)
 
-        try:
-            forecast_img = generate_forecast_image(cbu_rates)
-            if forecast_img:
-                send_telegram_photo(forecast_img, caption="🔮 Ertangi kurs bo'yicha taxmin (rasmiy bashorat emas)")
-        except Exception as e:
-            print(f"Taxmin rasm xatolik: {e}")
-
-        if gold.get("prices"):
+        if state.get("cbu") != cbu_key:
             try:
-                gold_img = generate_gold_image(gold)
-                send_telegram_photo(gold_img, caption="🥇 Oltin quymalar narxi — Markaziy bank")
+                cbu_img = generate_cbu_image(cbu_rates)
+                send_telegram_photo(cbu_img, caption="📊 Markaziy bank rasmiy kursi")
             except Exception as e:
-                print(f"Oltin rasm xatolik: {e}")
+                print(f"CBU rasm xatolik: {e}")
 
-        new_state["cbu"] = cbu_key
-        print("CBU rasmli postlar yuborildi")
+            try:
+                forecast_img = generate_forecast_image(cbu_rates)
+                if forecast_img:
+                    send_telegram_photo(forecast_img, caption="🔮 Ertangi kurs bo'yicha taxmin (rasmiy bashorat emas)")
+            except Exception as e:
+                print(f"Taxmin rasm xatolik: {e}")
+
+            if gold.get("prices"):
+                try:
+                    gold_img = generate_gold_image(gold)
+                    send_telegram_photo(gold_img, caption="🥇 Oltin quymalar narxi — Markaziy bank")
+                except Exception as e:
+                    print(f"Oltin rasm xatolik: {e}")
+
+            new_state["cbu"] = cbu_key
+            print("CBU rasmli postlar yuborildi")
+        else:
+            print("CBU kursi o'zgarmagan")
     else:
-        print("CBU kursi o'zgarmagan")
+        print("CBU bosqichi bu safar o'tkazib yuborildi, bank kurslariga o'tilmoqda")
 
     all_rates = get_all_bank_rates()
     print(f"\nJAMI: {len(all_rates)} / {len(BANKS)} ta bankdan ma'lumot olindi\n")
